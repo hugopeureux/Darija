@@ -1,5 +1,5 @@
 /* Cache hors ligne de l'application Darija. VERSION est recalculée par export_app.py à chaque mise à jour. */
-const VERSION = 'darija-1222ac37-369df6';
+const VERSION = 'darija-1222ac37-af4955';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'data.js', 'manifest.json', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(FILES.map(f => new Request(f, { cache: 'reload' })))).then(() => self.skipWaiting()));

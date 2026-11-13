@@ -66,8 +66,8 @@ function diffHTML(a, b) {   // a = ta réponse, b = la bonne : lettres en trop b
 
 /* ======================= progression (stockage robuste) ======================= */
 const KEY = 'darija-v2', BACKUP_KEY = 'darija-v2-avant-import', V1_KEY = 'darija-progress-v1';
-const SETTINGS = { newPerDay: [5, 10, 15, 20, 30], maxReview: [10, 20, 30, 50, 9999], font: [0.9, 1, 1.15, 1.3], arabic: [true, false], phrases: [true, false] };
-const DEFAULT_SETTINGS = { newPerDay: 15, maxReview: 20, font: 1, arabic: true, phrases: true };
+const SETTINGS = { newPerDay: [5, 10, 15, 20, 30], maxReview: [10, 20, 30, 50, 9999], font: [0.9, 1, 1.15, 1.3], arabic: [2, 1, 0], phrases: [true, false] };
+const DEFAULT_SETTINGS = { newPerDay: 15, maxReview: 20, font: 1, arabic: 2, phrases: true };
 const NOTE_KINDS = { bug: 'Bug', idee: 'Amélioration', contenu: 'Erreur dans le cours' };
 const num = (x, d = 0) => (typeof x === 'number' && isFinite(x) ? x : d);
 const DATE = /^\d{4}-\d\d-\d\d$/;
@@ -80,12 +80,13 @@ function normalize(p) {   // valide et nettoie une progression (stockée ou impo
     out.items[k] = { box: Math.max(0, Math.min(8, Math.round(num(s.box)))), due: num(s.due, now), ok: num(s.ok), ko: num(s.ko), lapses: num(s.lapses), first: num(s.first, now), last: num(s.last) };
     if (s.forced) out.items[k].forced = true;
   }
-  for (const [d, v] of Object.entries(p.days && typeof p.days === 'object' ? p.days : {})) if (DATE.test(d) && v) out.days[d] = { n: num(v.n), ok: num(v.ok), nw: num(v.nw), b: num(v.b) };
+  for (const [d, v] of Object.entries(p.days && typeof p.days === 'object' ? p.days : {})) if (DATE.test(d) && v) out.days[d] = { n: num(v.n), ok: num(v.ok), nw: num(v.nw), b: num(v.b), r: num(v.r) };
   if (Array.isArray(p.sessions)) out.sessions = p.sessions.filter(s => s && DATE.test(s.d)).map(s => ({ d: s.d, t: String(s.t || '').slice(0, 60), n: num(s.n), ok: num(s.ok), ts: num(s.ts) })).slice(-300);
   for (const [k, v] of Object.entries(p.ex && typeof p.ex === 'object' ? p.ex : {})) if (typeof v === 'string' && DATE.test(v)) out.ex[k] = v;
   for (const f of ['read', 'dlg', 'badges']) { out[f] = {}; for (const [k, v] of Object.entries(p[f] && typeof p[f] === 'object' ? p[f] : {})) if (typeof v === 'string' && DATE.test(v)) out[f][k] = v; }
   out.notes = (Array.isArray(p.notes) ? p.notes : []).filter(n => n && typeof n.id === 'string').map(n => ({ id: n.id.slice(0, 40), ts: num(n.ts, now), upd: num(n.upd, num(n.ts, now)), kind: NOTE_KINDS[n.kind] ? n.kind : 'bug', text: String(n.text || '').slice(0, 3000), ctx: String(n.ctx || '').slice(0, 500), done: !!n.done, del: !!n.del })).slice(-500);
-  if (p.settings) for (const k of Object.keys(DEFAULT_SETTINGS)) if (SETTINGS[k].includes(p.settings[k])) out.settings[k] = p.settings[k];
+  if (p.settings) for (const k of Object.keys(DEFAULT_SETTINGS)) { let v = p.settings[k]; if (k === 'arabic' && typeof v === 'boolean') v = v ? 2 : 0;   // ancien réglage oui / non
+    if (SETTINGS[k].includes(v)) out.settings[k] = v; }
   out.settingsAt = num(p.settingsAt); out.epoch = num(p.epoch); out.created = num(p.created, now);
   out.backup = num(p.backup); out.last = typeof p.last === 'string' ? p.last : null;
   out.persistAsked = !!p.persistAsked; out.persisted = !!p.persisted; out.rev = typeof p.rev === 'string' ? p.rev : '';
@@ -105,7 +106,7 @@ function merge0(base, mine) {   // base = version écrite par un autre écran, m
   }
   const out = base;
   for (const [k, s] of Object.entries(mine.items)) if (!out.items[k] || s.last > out.items[k].last) out.items[k] = s;
-  for (const [d, v] of Object.entries(mine.days)) { const o = out.days[d]; out.days[d] = o ? { n: Math.max(o.n, v.n), ok: Math.max(o.ok, v.ok), nw: Math.max(o.nw, v.nw), b: Math.max(o.b || 0, v.b || 0) } : v; }
+  for (const [d, v] of Object.entries(mine.days)) { const o = out.days[d]; out.days[d] = o ? { n: Math.max(o.n, v.n), ok: Math.max(o.ok, v.ok), nw: Math.max(o.nw, v.nw), b: Math.max(o.b || 0, v.b || 0), r: Math.max(o.r || 0, v.r || 0) } : v; }
   const seen = new Set(out.sessions.map(s => s.ts)); mine.sessions.forEach(s => { if (!seen.has(s.ts)) out.sessions.push(s); });
   out.sessions.sort((a, b) => a.ts - b.ts); out.sessions = out.sessions.slice(-300);
   out.ex = Object.assign({}, out.ex, mine.ex);
@@ -152,9 +153,11 @@ LEARN.forEach(id => {
       const key = r[5];
       if (key && IMAP[key]) { if (!IMAP[key].refs.includes(id)) IMAP[key].refs.push(id); }   // même ligne dans deux leçons : un seul élément
       else if (key) {
-        const frp = strip(r[3]), djp = strip(r[4]);
-        const ctx = /^(Réponse|→)/.test(frp) && prev ? prev : null;
-        const it = { key, id, refs: [id], kind: b.kind, sec, table: strip(b.title || ''), fr: r[0], frp, dj: r[1], djp, ar: r[2], ctx, nf: norm(frp), nd: norm(djp), na: noHarakat(r[2]) };
+        let fr = r[0], frp = strip(r[3]), ctx = null; const djp = strip(r[4]);
+        if (prev && /^Réponse/.test(frp)) {   // dans la leçon, « Réponse » suit sa question ; ailleurs il faut dire à quoi on répond
+          const q = strip(prev.dj); fr = fr.replace('Réponse', 'Réponse à «\u00a0' + esc(q) + '\u00a0»'); frp = frp.replace(/^Réponse/, 'Réponse à « ' + q + ' »');
+        } else if (/^→/.test(frp)) { fr = fr.replace(/→\s*/, ''); frp = frp.replace(/^→\s*/, ''); ctx = prev; }
+        const it = { key, id, refs: [id], kind: b.kind, sec, table: strip(b.title || ''), fr, frp, dj: r[1], djp, ar: r[2], ctx, nf: norm(frp), nd: norm(djp), na: noHarakat(r[2]) };
         const nw = djp.trim().split(/\s+/).length;
         it.writable = !/…/.test(djp) && nw <= 6;
         it.ord = b.kind === 'phr' && nw >= 3 && nw <= 9 && !/[…\/·(]/.test(djp);   // phrase à remettre en ordre
@@ -191,9 +194,9 @@ const st = it => P.items[it.key];
 const isDue = (it, t = endOfToday()) => { const s = st(it); return !!s && s.due <= t; };
 const boxOf = it => (st(it) ? st(it).box : -1);
 const fresh = now => ({ box: 0, due: now, ok: 0, ko: 0, lapses: 0, first: now, last: 0 });
-function logDay(good, learnedNew) {
-  const d = P.days[dayKey()] = P.days[dayKey()] || { n: 0, ok: 0, nw: 0, b: 0 };
-  d.n++; if (good) d.ok++; if (learnedNew) d.nw++;
+function logDay(good, learnedNew, reviewed) {
+  const d = P.days[dayKey()] = P.days[dayKey()] || { n: 0, ok: 0, nw: 0, b: 0, r: 0 };
+  d.n++; if (good) d.ok++; if (learnedNew) d.nw++; if (reviewed) d.r = (d.r || 0) + 1;
 }
 function grade(it, g, learning) {   // g : 0 raté, 1 hésité, 2 su
   const now = Date.now(); let s = st(it); const isNew = !s;
@@ -203,7 +206,7 @@ function grade(it, g, learning) {   // g : 0 raté, 1 hésité, 2 su
   else if (s.forced) { s.ok++; delete s.forced; s.due = addDays(studyStart(), fuzz(Math.max(1, INT[s.box]))); }   // ajouté à la main : réussi, il garde sa boîte
   else if (g === 1) { s.ok++; if (due) { s.box = Math.max(1, s.box); s.due = addDays(studyStart(), Math.max(1, Math.round(INT[s.box] / 2))); } }
   else { s.ok++; if (due) { s.box = Math.min(s.box + 1, INT.length - 1); s.due = addDays(studyStart(), fuzz(INT[s.box])); } }
-  s.last = now; logDay(g > 0, isNew && learning); save();
+  s.last = now; logDay(g > 0, isNew && learning, !isNew && due && g > 0 && !learning); save();   // « reviewed » : un élément dû vient d'être révisé
 }
 function knownAlready(it, spread) {   // « Je connais déjà » et tri : directement en boîte 2 ; premières révisions étalées sur deux semaines
   const now = Date.now(); const s = P.items[it.key] = st(it) || fresh(now);
@@ -276,13 +279,13 @@ function blockHTML(b, l, extra) {
     if (CULT.includes(b.title)) return `<div class="cult"><div class="lab l-cult">${IC.cult}Culture · ${esc(b.title)}</div>${b.x}</div>`;
     return `<div class="tip"><div class="lab l-tip">${IC.tip}${esc(b.title || 'Astuce')}</div>${b.x}</div>`;
   }
-  if (b.t === 'dlg') return dialogHTML({ id: l.id, idx: extra, title: b.title, lines: b.lines }, 'read') + `<a class="btn small ghost" href="#/dialogue/${l.id}/${extra}">S'entraîner sur ce dialogue</a>`;
+  if (b.t === 'dlg') return `<div class="danchor" id="d${extra}">${dialogHTML({ id: l.id, idx: extra, title: b.title, lines: b.lines }, 'read')}<div class="chips"><a class="btn small" href="#/dialogue/${l.id}/${extra}">Jouer ce dialogue</a><span class="dst" data-dlg="${extra}"></span></div></div>`;
   return '';
 }
-function dialogHTML(d, mode) {   // mode : read | nofr | role:<locuteur>
+function dialogHTML(d, mode, upTo) {   // mode : read | nofr | role:<locuteur> ; upTo : n'afficher que les premières répliques (jeu d'ordre)
   const sp = [...new Set(d.lines.map(x => x[0]))]; const ini = initials(sp);
   const role = mode.startsWith('role:') ? mode.slice(5) : null;
-  return `<div class="lab l-dlg">${IC.dlg}Dialogue<span class="tt">${d.title}</span></div><div class="dlg"><div class="cast">${sp.map(s => `<b>${esc(ini[s])}</b> = ${esc(s)}`).join(' · ')}</div>${d.lines.map(x => {
+  return `<div class="lab l-dlg">${IC.dlg}Dialogue<span class="tt">${d.title}</span></div><div class="dlg"><div class="cast">${sp.map(s => `<b>${esc(ini[s])}</b> = ${esc(s)}`).join(' · ')}</div>${(upTo === undefined ? d.lines : d.lines.slice(0, upTo)).map(x => {
     const me = role === x[0]; const hdj = me ? 'hid' : ''; const hfr = mode === 'nofr' ? 'hid' : '';
     return `<div class="ln ${me ? 'me' : ''}"><div class="who" title="${esc(x[0])}" aria-label="${esc(x[0])}">${esc(ini[x[0]])}</div><div class="bub" ${hdj || hfr ? 'role="button" tabindex="0"' : ''}><div class="dj ${hdj}">${x[2]}</div><div class="ar ${hdj}">${esc(x[3])}</div><div class="fr ${hfr}">${x[1]}</div></div></div>`;
   }).join('')}</div>`;
@@ -396,10 +399,10 @@ function screenNotes() {
 const hasWord = w => ITEMS.some(i => i.djp.toLowerCase().split(/[^a-z0-9']+/).includes(w));
 const MZ = hasWord('mzyan') && hasWord('bzzaf');   // encouragements en darija seulement si les mots sont dans le cours
 const HELLO = ITEMS.find(i => i.nd === norm('s-salamou 3alikoum')) || null;
-function bonus() { const d = P.days[dayKey()] = P.days[dayKey()] || { n: 0, ok: 0, nw: 0, b: 0 }; d.b = (d.b || 0) + 1; save(); }
+function bonus() { const d = P.days[dayKey()] = P.days[dayKey()] || { n: 0, ok: 0, nw: 0, b: 0, r: 0 }; d.b = (d.b || 0) + 1; save(); }
 function daily() {   // les trois étapes de la journée
   const due = dueList(); const left = Math.max(0, P.settings.newPerDay - newToday());
-  const avail = nextNew(Math.max(left, 1)); const t = P.days[dayKey()] || { n: 0, ok: 0, nw: 0, b: 0 };
+  const avail = nextNew(Math.max(left, 1)); const t = P.days[dayKey()] || { n: 0, ok: 0, nw: 0, b: 0, r: 0 };
   const s1 = !due.length, s2 = left === 0 || !avail.length, s3 = (t.b || 0) > 0;
   return { due, left, avail, t, s1, s2, s3, done: [s1, s2, s3].filter(Boolean).length };
 }
@@ -451,6 +454,10 @@ function itemPanel(r, it, links) {   // fiche d'un mot : état, « Réviser aujo
 
 /* ---------- Aujourd'hui ---------- */
 let celebrated = '';
+function ring(pct, inner) {   // jauge ronde d'un objectif
+  const c = 100.53, p = Math.max(0, Math.min(1, pct));
+  return `<span class="ring"><svg viewBox="0 0 36 36" aria-hidden="true"><circle class="rb" cx="18" cy="18" r="16"/><circle class="rf" cx="18" cy="18" r="16" stroke-dasharray="${(p * c).toFixed(1)} ${c}" transform="rotate(-90 18 18)"/></svg><b>${inner}</b></span>`;
+}
 function screenHome() {
   setHead('Aujourd\'hui');
   const d = daily(); const { due, left, avail, t } = d; const dueFix = due.filter(i => i.fix).length;
@@ -465,26 +472,35 @@ function screenHome() {
   const sk = streak(); const dg = nextDialogue();
   const curId = avail.length ? avail[0].id : (P.last && byId[P.last] && P.last !== 'MEMO' ? P.last : null); const cur = curId ? byId[curId] : null; const cs = curId ? lessonStats(curId) : null;
   const first = !d.s1 ? 1 : !d.s2 ? 2 : !d.s3 ? 3 : 0;   // la prochaine étape est mise en avant
-  const step = (n, done, title, sub, action) => `<div class="step ${done ? 'done' : ''} ${first === n ? 'now' : ''}"><div class="dot" aria-hidden="true">${done ? '✓' : n}</div><div class="sb"><div class="st">${title}${done ? ' <span class="muted">· fait</span>' : ''}</div><div class="muted ss">${sub}</div>${action}</div></div>`;
-  const s1sub = due.length ? `${plural(due.length, 'élément')} à revoir, juste avant de les oublier.${dueFix ? ` Dont ${plural(dueFix, 'faute relevée')}.` : ''}` : (nextCount ? `Prochaine révision : ${plural(nextCount, 'élément')} ${nextDay === addDays(studyStart(), 1) ? 'demain' : 'le ' + frDate(nextDay)}.` : 'Rien à revoir pour l\'instant.');
-  const s2sub = avail.length ? `Suite du cours : ${lessonLabel(avail[0].id)} · ${esc(avail[0].sec)}` : 'Tu as vu tous les éléments du cours.';
+  const rDone = t.r || 0, rTot = rDone + due.length;        // révisions faites aujourd'hui / à faire
+  const goal = P.settings.newPerDay, nwDone = Math.min(goal, t.nw || 0);
+  const cls = (n, done) => `goal ${done ? 'done' : ''} ${first === n ? 'now' : ''}`;
+  // trois cases à toucher : la jauge montre où tu en es, un toucher lance l'activité
+  const g1 = `<button type="button" class="${cls(1, d.s1)}" id="rev" ${due.length ? '' : 'disabled'} aria-label="Réviser, ${due.length} à revoir">${ring(rTot ? rDone / rTot : 1, d.s1 ? '✓' : due.length)}<span class="gl">Réviser</span><span class="gs">${rTot ? rDone + '/' + rTot : 'rien à revoir'}</span></button>`;
+  const g2 = left && avail.length ? `<button type="button" class="${cls(2, false)}" id="learn" aria-label="Apprendre, ${nLearn} nouveaux">${ring(goal ? nwDone / goal : 1, left)}<span class="gl">Apprendre</span><span class="gs">${nwDone}/${goal}</span></button>`
+    : `<button type="button" class="${cls(2, true)}" id="more" ${avail.length ? '' : 'disabled'} aria-label="Apprendre, objectif atteint">${ring(1, '✓')}<span class="gl">Apprendre</span><span class="gs">${avail.length ? 'encore 5 ?' : 'tout est vu'}</span></button>`;
+  const g3 = `<a class="${cls(3, d.s3)}" id="prac" href="${dg ? `#/dialogue/${dg.id}/${dg.idx}` : '#/libre'}" aria-label="Pratiquer, un dialogue">${ring(d.s3 ? 1 : 0, d.s3 ? '✓' : 1)}<span class="gl">Pratiquer</span><span class="gs">${d.s3 ? 'fait' : 'un dialogue'}</span></a>`;
+  const hint = first === 1 ? `À faire : réviser ${plural(due.length, 'élément')}${dueFix ? ` (dont ${plural(dueFix, 'faute relevée')})` : ''}.`
+    : first === 2 ? `À faire : apprendre ${nLearn} nouveau${nLearn > 1 ? 'x' : ''} · ${lessonLabel(avail[0].id)} · ${esc(avail[0].sec)}`
+    : first === 3 ? `À faire : jouer un dialogue${dg ? ' (' + lessonLabel(dg.id) + ')' : ''}, ou bien tes fautes, l'alphabet, un exercice de leçon.` : '';
+  const nextRev = !due.length && nextCount ? `Prochaine révision : ${plural(nextCount, 'élément')} ${nextDay === addDays(studyStart(), 1) ? 'demain' : 'le ' + frDate(nextDay)}.` : '';
   view.innerHTML = `${HELLO ? `<div class="hello"><span class="dj">${HELLO.dj}</span><span class="ar">${esc(HELLO.ar)}</span></div>` : ''}
   ${isFresh && firstTri ? `<div class="card" style="border-color:var(--v)"><h3>Premiers pas</h3><div class="muted">Tu as déjà suivi ces leçons avec ton prof : trie-les une par une en cochant ce que tu sais déjà dire. Ce que tu connais part en révision espacée ; le reste sera appris quelques éléments par jour.</div><div class="row2"><a class="btn small" href="#/tri/${firstTri}">Trier ${lessonName(firstTri)}</a><a class="btn small ghost" href="#/aide">Comment ça marche&nbsp;?</a></div></div>` : ''}
-  <div class="card path"><div class="phead"><h3>Ton parcours du jour</h3><span class="pcount">${d.done}/3</span></div><div class="bar"><i style="width:${d.done / 3 * 100}%"></i></div>
-    ${d.done === 3 ? `<div class="win">Journée complète${MZ ? ' · <b>mzyan bzzaf !</b>' : ' · bravo !'}${sk ? ` Série : ${plural(sk, 'jour')}.` : ''}</div>` : ''}
-    ${step(1, d.s1, 'Réviser', s1sub, `<button type="button" class="btn wide ${first === 1 ? '' : 'ghost'}" id="rev" ${due.length ? '' : 'disabled'}>Réviser${due.length ? ' (' + Math.min(due.length, P.settings.maxReview) + ')' : ''}</button>`)}
-    ${step(2, d.s2, 'Apprendre', s2sub, left ? `<button type="button" class="btn wide ${first === 2 ? '' : 'ghost'}" id="learn" ${nLearn ? '' : 'disabled'}>Apprendre${nLearn ? ' (' + nLearn + ')' : ''}</button>` : `<button type="button" class="btn wide ghost" id="more" ${avail.length ? '' : 'disabled'}>Objectif atteint · encore 5</button>`)}
-    ${step(3, d.s3, 'Pratiquer', d.s3 ? 'Fait pour aujourd\'hui. Tu peux continuer si tu veux.' : 'Au choix : un dialogue, tes fautes relevées ou un exercice de leçon.', `${dg ? `<a class="btn wide ${first === 3 ? '' : 'ghost'}" href="#/dialogue/${dg.id}/${dg.idx}">Jouer un dialogue · ${lessonLabel(dg.id)}</a>` : ''}${fixTodo ? `<button type="button" class="btn wide ghost" id="fixes">Retravailler mes fautes (${fixTodo})</button>` : ''}`)}
+  <div class="card path"><div class="phead"><h3>Ton parcours du jour</h3><span class="pcount">${d.done}/3</span></div>
+    <div class="goals">${g1}${g2}${g3}</div>
+    ${d.done === 3 ? `<div class="win">Journée complète${MZ ? ' · <b>mzyan bzzaf !</b>' : ' · bravo !'}${sk ? ` Série : ${plural(sk, 'jour')}.` : ''}</div>` : `<div class="pnext">${hint}</div>`}
+    ${nextRev ? `<div class="legend">${nextRev}</div>` : ''}
+    <div class="chips">${fixTodo ? `<button type="button" class="chip" id="fixes">Mes fautes (${fixTodo})</button>` : ''}${ALPHA.length ? '<button type="button" class="chip" id="abc2">Alphabet</button>' : ''}<a class="chip" href="#/libre">Séance libre</a></div>
   </div>
-  ${cur ? `<a class="card lrow" href="#/lecon/${curId}"><div class="num ${curId[0] === 'A' ? 'sm' : ''}">${curId[0] === 'A' ? 'Annexe' : cur.n}</div><div style="flex:1;min-width:0"><div class="s">Tu en es là dans le cours</div><div class="t">${cur.title}</div>${cs.n ? `<div class="bar"><i style="width:${cs.known / cs.n * 100}%"></i><i class="seen" style="width:${(cs.seen - cs.known) / cs.n * 100}%"></i></div><div class="legend">${cs.known} acquis · ${cs.seen} vus sur ${cs.n}</div>` : ''}</div></a>` : ''}
-  ${backupOld ? `<div class="card" style="border-color:var(--tip)"><b>Pense à sauvegarder ta progression.</b><div class="muted">Elle n'existe que sur ce téléphone.</div><a class="btn small" href="#/progres/sauvegarde" style="margin-top:.4rem">Exporter</a></div>` : ''}
+  ${cur ? `<a class="card lrow" href="#/lecon/${curId}"><div class="num ${curId[0] === 'A' ? 'sm' : ''}">${curId[0] === 'A' ? 'Annexe' : cur.n}</div><div style="flex:1;min-width:0"><div class="s">Tu en es là dans le cours</div><div class="t">${cur.title}</div>${cs.n ? `<div class="bar"><i style="width:${cs.known / cs.n * 100}%"></i><i class="seen" style="width:${(cs.seen - cs.known) / cs.n * 100}%"></i></div><div class="legend">${cs.seen} en révision sur ${cs.n} · ${cs.known} acquis</div>` : ''}</div></a>` : ''}
   <div class="stats"><div class="card"><div class="big">${sk}</div><div class="muted">jour${sk > 1 ? 's' : ''} de suite</div></div><div class="card"><div class="big">${t.n}</div><div class="muted">réponses aujourd'hui</div></div><div class="card"><div class="big">${acquired()}</div><div class="muted">acquis sur ${ALL.length}</div></div></div>
-  <div class="card"><h3>Séance libre</h3><div class="muted">Envie d'autre chose ? Paires, phrases à remettre en ordre, cartes, QCM, écriture, lecture de l'arabe, alphabet…</div><a class="btn wide ghost" href="#/libre">Composer une séance</a></div>
+  ${backupOld ? `<div class="card" style="border-color:var(--tip)"><b>Pense à sauvegarder ta progression.</b><div class="muted">Elle n'existe que sur ce téléphone.</div><a class="btn small" href="#/progres/sauvegarde" style="margin-top:.4rem">Exporter</a></div>` : ''}
   <div class="chips"><a class="chip" href="#/memo">Mémo de grammaire</a><a class="chip" href="#/lexique">Lexique</a><a class="chip" href="#/notes">Mes notes</a><a class="chip" href="#/aide">Comment ça marche&nbsp;?</a></div>`;
   if ($('#rev')) $('#rev').onclick = () => startReview();
   if ($('#learn')) $('#learn').onclick = () => startLearn(nextNew(left));
   if ($('#more')) $('#more').onclick = () => startLearn(nextNew(5));
   if ($('#fixes')) $('#fixes').onclick = () => startFixes();
+  if ($('#abc2')) $('#abc2').onclick = () => { free = { ids: [], src: 'alpha', mode: 'qcm', n: 20 }; runFree(); };
   if (d.done === 3 && t.n > 0 && celebrated !== dayKey()) { celebrated = dayKey(); celebrate(); }
 }
 
@@ -497,12 +513,12 @@ function lessonSteps(id) {   // étapes d'une leçon : lire, mots, dialogues, ex
 function screenLessons() {
   setHead('Leçons');
   const curId = (nextNew(1)[0] || {}).id;
-  view.innerHTML = PARTS.map(p => `<div class="part">Partie ${esc(p.n)} · ${esc(p.title)}</div>` + p.ids.map(id => {
+  view.innerHTML = `<p class="muted" style="font-size:.85rem;margin:.2rem 0 0"><b>En révision</b> : mots déjà appris ou triés, que l'application te redemande régulièrement. <b>Acquis</b> : mots sus plusieurs fois de suite, qui ne reviennent plus que tous les 7 jours ou plus.</p>` + PARTS.map(p => `<div class="part">Partie ${esc(p.n)} · ${esc(p.title)}</div>` + p.ids.map(id => {
     const l = byId[id], q = lessonSteps(id), s = q.s;
     const k = s.n ? Math.round(s.known / s.n * 100) : 0, v = s.n ? Math.round((s.seen - s.known) / s.n * 100) : 0;
     const status = !s.n ? '' : mastered(id) ? '<span class="tag t-ok">Maîtrisée</span>' : s.seen ? '<span class="tag t-run">En cours</span>' : '<span class="tag">À découvrir</span>';
-    const steps = [q.read ? 'Lue ✓' : 'À lire', q.dl ? `Dialogues ${q.dlDone}/${q.dl}` : '', q.ex ? `Exercices ${q.exDone}/${q.ex}` : ''].filter(Boolean).join(' · ');
-    const prog = s.n ? `<div class="bar"><i style="width:${k}%"></i><i class="seen" style="width:${v}%"></i></div><div class="legend">${s.known} acquis · ${s.seen} vus sur ${s.n}${s.due ? ' · ' + s.due + ' à réviser' : ''}</div><div class="legend">${steps}</div>`
+    const steps = [q.read ? 'Lue ✓' : 'À lire', q.dl ? `Dialogues validés ${q.dlDone}/${q.dl}` : '', q.ex ? `Exercices faits ${q.exDone}/${q.ex}` : ''].filter(Boolean).join(' · ');
+    const prog = s.n ? `<div class="bar"><i style="width:${k}%"></i><i class="seen" style="width:${v}%"></i></div><div class="legend">${s.seen} en révision sur ${s.n} · ${s.known} acquis${s.due ? ' · ' + s.due + ' à réviser aujourd\'hui' : ''}</div><div class="legend">${steps}</div>`
       : `<div class="legend">${id === 'L00' ? 'Référence : l\'alphabet se travaille dans la leçon et en séance libre.' : 'Pas d\'éléments à mémoriser.'}</div>`;
     return `<a class="card lrow ${id === curId ? 'cur' : ''}" href="#/lecon/${id}"><div class="num ${id[0] === 'A' ? 'sm' : ''}">${id[0] === 'A' ? 'Annexe' : l.n}</div><div style="flex:1;min-width:0"><div class="t">${l.title} ${status}</div>${id === curId ? '<div class="here">Tu en es là</div>' : ''}<div class="s">${l.sub}</div>${prog}</div></a>`;
   }).join('')).join('')
@@ -526,7 +542,7 @@ function screenLesson(id) {
   }).join('');
   const k = NAV.indexOf(id), prev = NAV[k - 1], next = NAV[k + 1];
   view.innerHTML = `<h1 class="lt">${l.title}</h1><div class="ar" style="text-align:left">${esc(l.ar)}</div><p class="muted" style="margin:.2rem 0">${l.sub}</p>
-  ${s.n ? `<div class="legend">${s.known} acquis · ${s.seen} vus sur ${s.n} éléments${s.due ? ' · ' + s.due + ' à réviser' : ''}</div>
+  ${s.n ? `<div class="legend">${s.seen} en révision sur ${s.n} éléments · ${s.known} acquis${s.due ? ' · ' + s.due + ' à réviser aujourd\'hui' : ''}</div>
   <div class="row2"><button type="button" class="btn" id="lrn" ${nNew ? '' : 'disabled'}>Apprendre${nNew ? ' (' + Math.min(nNew, 10) + ')' : ''}</button><button type="button" class="btn ghost" id="rvw" ${s.seen ? '' : 'disabled'}>Réviser la leçon</button></div>
   ${nNew ? `<a class="btn small ghost" href="#/tri/${id}" style="margin-bottom:.4rem">Déjà vu en cours ? Coche ce que tu connais (${nNew})</a>` : ''}` : (ALPHA.length && id === 'L00' ? `<button type="button" class="btn small ghost" id="abc">S'entraîner à reconnaître les lettres</button>` : '')}
   <div class="lsteps" id="lsteps"></div>
@@ -540,17 +556,27 @@ function screenLesson(id) {
   const focusRows = () => $$('#lbody .rv').forEach(x => { if (lessonMode !== 'read') { x.tabIndex = 0; x.setAttribute('role', 'button'); } else { x.removeAttribute('tabindex'); x.removeAttribute('role'); } });
   const drawSteps = () => {
     const q = lessonSteps(id);
-    $('#lsteps').innerHTML = [['Lire', q.read ? '✓' : '', !!q.read], s.n ? ['Mots', `${q.s.seen}/${q.s.n}`, q.s.seen === q.s.n] : null, q.dl ? ['Dialogues', `${q.dlDone}/${q.dl}`, q.dlDone === q.dl] : null, q.ex ? ['Exercices', `${q.exDone}/${q.ex}`, q.exDone === q.ex] : null].filter(Boolean)
-      .map(([t, v, ok], n) => `<span class="lstep ${ok ? 'ok' : ''}"><b>${n + 1}</b> ${t}${v ? ' ' + v : ''}</span>`).join('<span class="arrow" aria-hidden="true">›</span>');
+    const steps = [['lire', 'Lire', q.read ? '✓' : '', !!q.read], s.n ? ['mots', 'Mots', `${q.s.seen}/${q.s.n}`, q.s.seen === q.s.n] : null, q.dl ? ['dlg', 'Dialogues', `${q.dlDone}/${q.dl}`, q.dlDone === q.dl] : null, q.ex ? ['ex', 'Exercices', `${q.exDone}/${q.ex}`, q.exDone === q.ex] : null].filter(Boolean);
+    $('#lsteps').innerHTML = steps.map(([go, t, v, ok], n) => `<button type="button" class="lstep ${ok ? 'ok' : ''}" data-go="${go}"><b>${n + 1}</b> ${t}${v ? ' ' + v : ''}</button>`).join('<span class="arrow" aria-hidden="true">›</span>')
+      + `<div class="legend" style="width:100%">Touche une étape pour y aller. La lecture se valide en bas de la leçon${q.dl ? ', un dialogue en le jouant' : ''}${q.ex ? ', un exercice en le marquant comme fait' : ''}.</div>`;
+    $$('#lbody [data-dlg]').forEach(el => { const dd = P.dlg[id + '/' + el.dataset.dlg]; el.innerHTML = dd ? `<span class="tag t-ok">Validé le ${esc(dd.split('-').reverse().join('/'))}</span>` : '<span class="tag">Pas encore validé</span>'; });
     const dnext = DIALOGS.find(d => d.id === id && !P.dlg[id + '/' + d.idx]);
     $('#lend').innerHTML = q.read
-      ? `<b>Leçon lue le ${esc(q.read.split('-').reverse().join('/'))}.</b><div class="muted">La suite : ${nNew ? 'apprends les mots, ' : ''}${dnext ? 'joue un dialogue, ' : ''}puis fais les exercices ci-dessus.</div><div class="chips">${nNew ? '<button type="button" class="btn small" id="lrn2">Apprendre les mots</button>' : ''}${dnext ? `<a class="btn small ghost" href="#/dialogue/${id}/${dnext.idx}">Jouer un dialogue</a>` : ''}<button type="button" class="btn small ghost" id="lnote">Ajouter une note sur cette leçon</button></div>`
+      ? `<b>Leçon lue le ${esc(q.read.split('-').reverse().join('/'))}.</b><div class="muted">La suite : ${nNew ? 'apprends les mots, ' : ''}${dnext ? 'joue un dialogue, ' : ''}puis fais les exercices (étapes en haut de la leçon).</div><div class="chips">${nNew ? '<button type="button" class="btn small" id="lrn2">Apprendre les mots</button>' : ''}${dnext ? `<a class="btn small ghost" href="#/dialogue/${id}/${dnext.idx}">Jouer un dialogue</a>` : ''}<button type="button" class="btn small ghost" id="lnote">Ajouter une note sur cette leçon</button></div>`
       : `<b>Tu as tout lu ?</b><div class="muted">Marque la leçon comme lue : c'est la première étape du parcours.</div><div class="chips"><button type="button" class="btn small" id="lread">J'ai lu cette leçon</button><button type="button" class="btn small ghost" id="lnote">Ajouter une note sur cette leçon</button></div>`;
     if ($('#lread')) $('#lread').onclick = () => { P.read[id] = dayKey(); save(); drawSteps(); toast(MZ ? 'Mzyan ! Leçon lue.' : 'Leçon lue.'); };
     if ($('#lrn2')) $('#lrn2').onclick = () => startLearn(nextNew(10, [id]));
     $('#lnote').onclick = () => noteSheet('Leçon ' + lessonLabel(id) + ' · ' + strip(l.title), 'contenu');
   };
   stick(); focusRows(); drawSteps();
+  $('#lsteps').onclick = e => {   // chaque étape mène à son contenu
+    const b = e.target.closest('[data-go]'); if (!b) return; stick();
+    const to = el => { if (el) el.scrollIntoView({ behavior: 'smooth' }); };
+    if (b.dataset.go === 'lire') to($('#lbody'));
+    else if (b.dataset.go === 'mots') { if (nextNew(1, [id]).length) startLearn(nextNew(10, [id])); else revLesson(); }
+    else if (b.dataset.go === 'dlg') { const dn = DIALOGS.find(x => x.id === id && !P.dlg[id + '/' + x.idx]) || DIALOGS.find(x => x.id === id); to(dn && $('#d' + dn.idx)); }
+    else if (b.dataset.go === 'ex') { const exs = $$('#lbody .ex'); to(exs.find(x => !P.ex[x.dataset.ex]) || exs[0]); }
+  };
   $('#secs').onclick = e => { const c = e.target.closest('.chip'); if (c) { stick(); $('#s' + c.dataset.s).scrollIntoView({ behavior: 'smooth' }); } };
   $('#modes').onclick = e => { const c = e.target.closest('.chip'); if (!c) return; lessonMode = c.dataset.m; $('#lbody').className = lessonMode; $$('#modes .chip').forEach(x => { x.classList.toggle('on', x === c); x.setAttribute('aria-pressed', x === c); }); $$('.rv.show').forEach(x => x.classList.remove('show')); focusRows(); };
   $('#lbody').onclick = e => {
@@ -643,30 +669,67 @@ function screenLexique() {
 /* ---------- Dialogues ---------- */
 function screenDialogues() {
   setHead('Dialogues');
-  view.innerHTML = '<p class="muted">Lis-les à voix haute, puis entraîne-toi : cache le français pour comprendre, ou joue un rôle (tes répliques sont cachées, tu les dis avant de vérifier). Un dialogue travaillé valide l\'étape « Pratiquer » du jour.</p>' + PARTS.map(p => {
+  view.innerHTML = '<p class="muted">Lis-les à voix haute, puis entraîne-toi : cache le français pour comprendre, joue un rôle (tes répliques sont cachées, tu les dis avant de vérifier) ou remets les répliques dans l\'ordre. Un dialogue validé compte pour sa leçon et pour l\'étape « Pratiquer » du jour.</p>' + PARTS.map(p => {
     const ds = DIALOGS.filter(d => p.ids.includes(d.id));
-    return ds.length ? `<div class="part">Partie ${esc(p.n)} · ${esc(p.title)}</div>` + ds.map(d => { const done = P.dlg[d.id + '/' + d.idx]; return `<a class="card lrow" href="#/dialogue/${d.id}/${d.idx}"><div class="num sm">${lessonLabel(d.id)}</div><div><div class="t">${d.title} ${done ? '<span class="tag t-ok">Joué</span>' : ''}</div><div class="s">${d.lines.length} répliques · ${esc([...new Set(d.lines.map(x => x[0]))].join(', '))}</div></div></a>`; }).join('') : '';
+    return ds.length ? `<div class="part">Partie ${esc(p.n)} · ${esc(p.title)}</div>` + ds.map(d => { const done = P.dlg[d.id + '/' + d.idx]; return `<a class="card lrow" href="#/dialogue/${d.id}/${d.idx}"><div class="num sm">${lessonLabel(d.id)}</div><div><div class="t">${d.title} ${done ? '<span class="tag t-ok">Validé</span>' : ''}</div><div class="s">${d.lines.length} répliques · ${esc([...new Set(d.lines.map(x => x[0]))].join(', '))}</div></div></a>`; }).join('') : '';
   }).join('');
 }
 function screenDialogue(id, idx) {
   const d = DIALOGS.find(x => x.id === id && x.idx === +idx); if (!d) return screenDialogues();
   setHead(lessonLabel(id) + ' · dialogue', true);
-  const sp = [...new Set(d.lines.map(x => x[0]))]; const key = id + '/' + d.idx;
-  const k = DIALOGS.indexOf(d), nextD = DIALOGS[k + 1];
-  const draw = mode => {
-    let credited = false;
-    view.innerHTML = `<div class="chips">${chip('data-m="read"', mode === 'read', 'Lire')}${chip('data-m="nofr"', mode === 'nofr', 'Cacher le français')}${sp.map(s => chip(`data-m="role:${esc(s)}"`, mode === 'role:' + s, 'Jouer ' + esc(s))).join('')}</div>`
-      + (mode === 'read' ? '<p class="muted">Lis le dialogue à voix haute, puis choisis un rôle ci-dessus pour le jouer.</p>' : `<p class="muted">${mode === 'nofr' ? 'Comprends chaque réplique, puis touche-la pour voir le français.' : 'Dis tes répliques en darija, puis touche la bulle pour vérifier.'}</p>`)
-      + dialogHTML(d, mode) + `<div id="dend"></div><div class="chips"><a class="btn small ghost" href="#/lecon/${id}">Voir ${lessonName(id)}</a><button type="button" class="btn small ghost" id="dnote">Signaler</button></div>`;
+  const sp = [...new Set(d.lines.map(x => x[0]))]; const key = id + '/' + d.idx; const ini = initials(sp);
+  const nextD = DIALOGS[DIALOGS.indexOf(d) + 1];
+  const same = (a, b) => a[0] === b[0] && a[2] === b[2];
+  let credited = false, curMode = 'read';
+  const stateHTML = () => (P.dlg[key] ? `<span class="tag t-ok">Validé le ${esc(P.dlg[key].split('-').reverse().join('/'))}</span>` : '<span class="tag">Pas encore validé</span> <span class="muted">Pour le valider : joue un rôle, cache le français ou remets-le en ordre.</span>');
+  const head = mode => `<div class="chips">${chip('data-m="read"', mode === 'read', 'Lire')}${chip('data-m="nofr"', mode === 'nofr', 'Cacher le français')}${sp.map(s => chip(`data-m="role:${esc(s)}"`, mode === 'role:' + s, 'Jouer ' + esc(s))).join('')}${chip('data-m="order"', mode === 'order', 'Remettre en ordre')}</div><div id="dstate" class="dstate">${stateHTML()}</div>`;
+  const foot = () => `<div id="dend"></div><div class="chips"><button type="button" class="btn small ghost" id="dval">J'ai travaillé ce dialogue</button><a class="btn small ghost" href="#/lecon/${id}">Voir ${lessonName(id)}</a><button type="button" class="btn small ghost" id="dnote">Signaler</button></div>`;
+  const credit = how => {   // dialogue validé : il compte pour la leçon et pour l'étape « Pratiquer » du jour
+    if (credited) return; credited = true;
+    const firstTime = !P.dlg[key]; P.dlg[key] = dayKey(); bonus(); const nb = checkBadges(); const mode = curMode;
+    $('#dend').innerHTML = `<div class="res good">${MZ ? 'Mzyan ! ' : ''}Dialogue validé${how ? ' : ' + how : ''}${firstTime ? '' : ' (une fois de plus)'}.${nb.length ? ' Nouveau badge : ' + esc(nb.map(b => b[1]).join(', ')) + '.' : ''}</div><div class="chips">${mode !== 'order' ? '<button type="button" class="btn small" data-mode="order">Le remettre en ordre</button>' : ''}${sp.filter(s => mode !== 'role:' + s).slice(0, 2).map(s => `<button type="button" class="btn small ${mode === 'order' ? '' : 'ghost'}" data-mode="role:${esc(s)}">Jouer ${esc(s)}</button>`).join('')}${nextD ? `<a class="btn small ghost" href="#/dialogue/${nextD.id}/${nextD.idx}">Dialogue suivant</a>` : ''}<a class="btn small ghost" href="#/">Accueil</a></div>`;
+    $$('#dend [data-mode]').forEach(b => { b.onclick = () => { draw(b.dataset.mode); window.scrollTo(0, 0); }; });
+    if ($('#dstate')) $('#dstate').innerHTML = stateHTML();
+    if ($('#dval')) $('#dval').remove();
+    if (nb.length) celebrate();
+  };
+  const bindCommon = () => {
     $('.chips', view).onclick = e => { const c = e.target.closest('.chip'); if (c) draw(c.dataset.m); };
     $('#dnote').onclick = () => noteSheet('Dialogue ' + lessonLabel(id) + ' · ' + strip(d.title), 'contenu');
-    const finished = () => {   // toutes les répliques cachées ont été révélées : le dialogue est travaillé
-      if (credited || mode === 'read' || $('.dlg .hid', view)) return;
-      credited = true; const firstTime = !P.dlg[key]; P.dlg[key] = dayKey(); bonus(); const nb = checkBadges();
-      $('#dend').innerHTML = `<div class="res good">${MZ ? 'Mzyan ! ' : ''}Dialogue travaillé${firstTime ? '' : ' une fois de plus'}.${nb.length ? ' Nouveau badge : ' + esc(nb.map(b => b[1]).join(', ')) + '.' : ''}</div><div class="chips">${sp.filter(s => mode !== 'role:' + s).slice(0, 2).map(s => `<button type="button" class="btn small" data-role="${esc(s)}">Jouer ${esc(s)}</button>`).join('')}${nextD ? `<a class="btn small ghost" href="#/dialogue/${nextD.id}/${nextD.idx}">Dialogue suivant</a>` : ''}<a class="btn small ghost" href="#/">Accueil</a></div>`;
-      $$('[data-role]', view).forEach(b => { b.onclick = () => { draw('role:' + b.dataset.role); window.scrollTo(0, 0); }; });
-      if (nb.length) celebrate();
+    $('#dval').onclick = () => credit('');
+  };
+  const drawOrder = () => {   // jeu : reconstituer le dialogue, réplique après réplique
+    let placed = 0, miss = 0, showFr = false, cands = [];
+    const pick = () => {   // la bonne réplique et jusqu'à trois autres, de préférence du même locuteur
+      const exp = d.lines[placed]; const uniq = [];
+      d.lines.slice(placed + 1).forEach(x => { if (!same(x, exp) && !uniq.some(u => same(u, x))) uniq.push(x); });
+      shuffle(uniq).sort((a, b) => (b[0] === exp[0]) - (a[0] === exp[0]));
+      cands = shuffle([exp, ...uniq.slice(0, 3)]);
     };
+    const render = () => {
+      const done = placed >= d.lines.length;
+      view.innerHTML = head('order') + '<p class="muted">Reconstitue le dialogue : touche la réplique qui vient ensuite.</p>' + dialogHTML(d, 'read', placed)
+        + (done ? '' : `<div id="dord"><div class="lab">Réplique ${placed + 1} sur ${d.lines.length} : laquelle vient maintenant ?</div><div class="cands">${cands.map((x, n) => `<button type="button" class="cand" data-n="${n}"><span class="who" aria-hidden="true">${esc(ini[x[0]])}</span><span class="ct"><span class="dj">${x[2]}</span><span class="ar">${esc(x[3])}</span>${showFr ? `<span class="fr">${x[1]}</span>` : ''}</span></button>`).join('')}</div>${chip('id="dfr"', showFr, 'Aide : afficher le français')}</div>`)
+        + foot();
+      bindCommon();
+      if (done) { credit(miss ? `reconstitué avec ${plural(miss, 'erreur')}` : 'reconstitué sans erreur'); return; }
+      $('#dfr').onclick = () => { showFr = !showFr; render(); };
+      $('.cands').onclick = e => {
+        const b = e.target.closest('.cand'); if (!b || b.disabled) return;
+        if (same(cands[+b.dataset.n], d.lines[placed])) { placed++; if (placed < d.lines.length) pick(); render(); const o = $('#dord') || $('#dend'); if (o) o.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+        else { miss++; b.classList.add('wrong'); b.disabled = true; if (navigator.vibrate) navigator.vibrate(30); }
+      };
+    };
+    pick(); render();
+  };
+  const draw = mode => {
+    curMode = mode; credited = false;
+    if (mode === 'order') return drawOrder();
+    view.innerHTML = head(mode)
+      + `<p class="muted">${mode === 'read' ? 'Lis le dialogue à voix haute, puis choisis un entraînement ci-dessus.' : mode === 'nofr' ? 'Comprends chaque réplique, puis touche-la pour voir le français.' : 'Dis tes répliques en darija, puis touche la bulle pour vérifier.'}</p>`
+      + dialogHTML(d, mode) + foot();
+    bindCommon();
+    const finished = () => { if (mode === 'read' || $('.dlg .hid', view)) return; credit(mode === 'nofr' ? 'compris sans le français' : 'rôle joué'); };   // toutes les répliques cachées ont été révélées
     $$('.bub', view).forEach(b => { b.onclick = () => { $$('.hid', b).forEach(h => h.classList.remove('hid')); finished(); }; b.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); b.click(); } }; });
   };
   draw('read');
@@ -677,11 +740,13 @@ function pickWeighted(items, n) {   // tirage pondéré sans remise : les points
   const w = it => { const s = st(it); if (!s) return 2; return Math.max(0.3, 1 + s.lapses * 2 + (s.box === 0 ? 2 : 0) - s.box * 0.4 + (isDue(it) ? 2 : 0)); };
   return items.map(it => [Math.pow(Math.random(), 1 / w(it)), it]).sort((a, b) => b[0] - a[0]).slice(0, n).map(x => x[1]);
 }
-function taskFor(it) {   // le type d'exercice suit le niveau : reconnaître, puis se rappeler, puis écrire
+function taskFor(it) {   // le type d'exercice suit le niveau : reconnaître, puis se rappeler, puis écrire ; l'arabe seul revient selon le réglage
   if (it.fix) return 'fix';
-  const b = boxOf(it);
-  if (b <= 1) return Math.random() < 0.5 ? 'qcm-fr' : 'qcm-dj';
-  if (b <= 3) { if (it.ord && Math.random() < 0.5) return 'order'; return P.settings.arabic && it.ar && !/…/.test(it.ar) && Math.random() < 0.25 ? 'arabe' : 'card-fr'; }
+  const b = boxOf(it); const lv = P.settings.arabic;
+  const ar = it.ar && !/…/.test(it.ar) && Math.random() < (lv === 2 ? 0.35 : lv === 1 ? 0.15 : 0);
+  if (b <= 1) return ar ? (Math.random() < 0.5 ? 'qcm-ar' : 'qcm-ar-dj') : Math.random() < 0.5 ? 'qcm-fr' : 'qcm-dj';
+  if (b <= 3) { if (ar) return Math.random() < 0.5 ? 'qcm-ar' : 'arabe'; return it.ord && Math.random() < 0.5 ? 'order' : 'card-fr'; }
+  if (ar && Math.random() < 0.6) return 'arabe';
   return it.writable ? 'write' : it.ord ? 'order' : 'card-fr';
 }
 function startReview() {
@@ -790,6 +855,9 @@ function screenSession() {
   } else if (task.type === 'qcm-fr' || task.type === 'qcm-dj') {
     const fr = task.type === 'qcm-fr';
     qcm(`<div class="prompt">${fr ? it.fr : it.dj}</div>`, fr ? 'Quelle est la darija ?' : 'Que veut dire… ?', shuffle([it, ...distractors(it, 3, fr ? 'dj' : 'fr')]), o => (fr ? o.dj : o.fr), it, reveal);
+  } else if (task.type === 'qcm-ar' || task.type === 'qcm-ar-dj') {   // lecture de l'arabe, sans la transcription
+    const toFr = task.type === 'qcm-ar';
+    qcm(`<div class="prompt arp ar">${esc(it.ar)}</div>`, toFr ? 'Lis l\'arabe : que veut dire… ?' : 'Lis l\'arabe : comment ça se prononce ?', shuffle([it, ...distractors(it, 3, toFr ? 'fr' : 'dj')]), o => (toFr ? o.fr : o.dj), it, reveal);
   } else if (task.type === 'alpha') {   // l'alphabet n'entre pas dans la révision espacée
     const opts = shuffle([it, ...shuffle(ALPHA.filter(x => x !== it && x.tr !== it.tr)).slice(0, 3)]);
     const rev = `<div class="reveal"><div class="ar">${esc(it.forms.replace(/ · /g, '   '))}</div><div class="muted">${esc(it.name)} · ${esc(it.sound)}</div></div>`;
@@ -905,7 +973,7 @@ function endSession() {
 
 /* ---------- Séance libre ---------- */
 let free = { ids: [], src: 'tout', mode: 'auto', n: 20 };
-const FREE_MODES = [['pairs', 'Paires'], ['order', 'Phrases en ordre'], ['card-fr', 'Cartes FR → darija'], ['card-dj', 'Cartes darija → FR'], ['qcm', 'QCM'], ['write', 'Écrire'], ['arabe', 'Lire l\'arabe'], ['auto', 'Selon mon niveau']];
+const FREE_MODES = [['pairs', 'Paires'], ['order', 'Phrases en ordre'], ['card-fr', 'Cartes FR → darija'], ['card-dj', 'Cartes darija → FR'], ['qcm', 'QCM'], ['write', 'Écrire'], ['qcm-ar', 'Lire l\'arabe (QCM)'], ['arabe', 'Lire l\'arabe (cartes)'], ['auto', 'Selon mon niveau']];
 const FREE_SRC = [['tout', 'Mots et phrases'], ['vocab', 'Mots'], ['phr', 'Phrases'], ['erreurs', 'Mes erreurs'], ['fix', 'Fautes relevées'], ['alpha', 'Alphabet']];
 function freePool() {
   if (free.src === 'fix') return FIXES.filter(f => !free.ids.length || free.ids.includes(f.id));
@@ -916,7 +984,7 @@ function freePool() {
   if (free.src === 'erreurs') p = p.filter(i => st(i) && st(i).ko > 0 && boxOf(i) < ACQUIS);
   if (free.mode === 'write') p = p.filter(i => i.writable);
   if (free.mode === 'order') p = p.filter(i => i.ord);
-  if (free.mode === 'arabe') p = p.filter(i => i.ar && !/…/.test(i.ar));
+  if (free.mode === 'arabe' || free.mode === 'qcm-ar') p = p.filter(i => i.ar && !/…/.test(i.ar));
   return p;
 }
 function screenLibre() {
@@ -942,7 +1010,7 @@ function runFree() {
   if (free.src === 'alpha') tasks = shuffle(pool.slice()).slice(0, n).map(it => ({ type: 'alpha', it }));
   else if (free.src === 'fix') tasks = pickWeighted(pool, n).map(it => ({ type: 'fix', it }));
   else if (free.mode === 'pairs') { const pk = pickWeighted(pool.filter(i => i.djp.length <= 30), n); tasks = []; for (let k = 0; k + 3 <= pk.length || (k === 0 && pk.length >= 2); k += 5) tasks.push({ type: 'pairs', it: pk[k], its: pk.slice(k, k + 5) }); }
-  else tasks = pickWeighted(pool, n).map(it => ({ type: free.mode === 'auto' ? taskFor(it) : free.mode === 'qcm' ? (Math.random() < 0.5 ? 'qcm-fr' : 'qcm-dj') : free.mode, it }));
+  else tasks = pickWeighted(pool, n).map(it => ({ type: free.mode === 'auto' ? taskFor(it) : free.mode === 'qcm' ? (Math.random() < 0.5 ? 'qcm-fr' : 'qcm-dj') : free.mode === 'qcm-ar' ? (Math.random() < 0.6 ? 'qcm-ar' : 'qcm-ar-dj') : free.mode, it }));
   startSession(free.src === 'alpha' ? 'Alphabet' : 'Séance libre', tasks, () => runFree(), 'free');
 }
 
@@ -1001,7 +1069,7 @@ function screenReglages() {
   view.innerHTML = `<div class="card"><b>Nouveaux éléments par jour</b>${opt('newPerDay', ['5', '10', '15', '20', '30'])}</div>
   <div class="card"><b>Longueur d'une séance de révision</b>${opt('maxReview', ['10', '20', '30', '50', 'Toutes'])}</div>
   <div class="card"><b>Taille du texte</b>${opt('font', ['Petite', 'Normale', 'Grande', 'Très grande'])}<div class="ar" style="text-align:left">سْمِيتِي هُوڭُو</div></div>
-  <div class="card"><b>Lecture de l'arabe pendant les révisions</b>${opt('arabic', ['Oui, parfois', 'Non'])}</div>
+  <div class="card"><b>Lecture de l'arabe seul (sans la transcription) pendant les révisions</b>${opt('arabic', ['Souvent', 'Parfois', 'Jamais'])}</div>
   <div class="card"><b>Apprendre aussi les phrases modèles</b>${opt('phrases', ['Oui', 'Seulement les mots'])}</div>
   <div class="card"><b>Application</b><p class="muted">Contenu du ${esc(VDATE)} (${esc(D.hash)}). Fonctionne hors ligne une fois installée ; les mises à jour s'installent quand tu l'ouvres avec internet.</p><div class="chips"><button type="button" class="btn small ghost" id="upd">Chercher une mise à jour</button><a class="btn small ghost" href="#/aide">Comment ça marche&nbsp;?</a></div></div>
   ${hasBackup ? '<div class="card"><b>Dernier import</b><p class="muted">La progression d\'avant l\'import a été gardée de côté.</p><button type="button" class="btn small ghost" id="undo">Rétablir la progression d\'avant l\'import</button></div>' : ''}
@@ -1023,15 +1091,17 @@ function screenReglages() {
 }
 function screenAide() {
   setHead('Comment ça marche\u00a0?', true);
-  view.innerHTML = `<div class="card help"><h3>Ton parcours du jour</h3><p>L'accueil propose trois étapes, dans l'ordre : <b>Réviser</b> ce qui est dû, <b>Apprendre</b> quelques nouveaux éléments, <b>Pratiquer</b> (un dialogue, tes fautes relevées ou un exercice). Dix à quinze minutes suffisent. Chaque jour complet allonge ta série.</p>
+  view.innerHTML = `<div class="card help"><h3>Ton parcours du jour</h3><p>L'accueil propose trois cases, dans l'ordre : <b>Réviser</b> ce qui est dû, <b>Apprendre</b> quelques nouveaux éléments, <b>Pratiquer</b> (un dialogue, tes fautes relevées, l'alphabet ou un exercice). La jauge de chaque case montre où tu en es ; touche la case pour commencer. Dix à quinze minutes suffisent. Chaque jour complet allonge ta série.</p>
+  <p><b>En révision</b> : un mot que tu as appris ou trié ; l'application te le redemande régulièrement. <b>Acquis</b> : un mot su plusieurs fois de suite, qui ne revient plus que tous les 7 jours ou plus.</p>
   <h3>La méthode</h3><ol>
   <li><b>Trie les leçons déjà vues en cours</b> : dans chaque leçon, « Coche ce que tu connais ». Ce que tu sais part en révision espacée.</li>
-  <li><b>Chaque leçon a ses étapes</b> : la lire, apprendre ses mots, jouer ses dialogues, faire ses exercices. « Cacher la darija » ou « Cacher le français » transforme les tableaux en test ; en lecture, touche un mot pour le réviser aujourd'hui ou le signaler.</li>
+  <li><b>Chaque leçon a ses étapes</b> : la lire, apprendre ses mots, jouer ses dialogues, faire ses exercices. Touche une étape, en haut de la leçon, pour y aller. La lecture se valide en bas de la leçon, un dialogue en le jouant, un exercice en le marquant comme fait. « Cacher la darija » ou « Cacher le français » transforme les tableaux en test ; en lecture, touche un mot pour le réviser aujourd'hui ou le signaler.</li>
   <li><b>Apprendre</b> : les nouveaux éléments arrivent dans l'ordre du cours, par groupes de cinq : présentation, jeu d'association, puis QCM. Si tu en connais un, touche « Je connais déjà ».</li>
   <li><b>Réviser</b> : l'application redonne chaque élément de plus en plus tard quand tu réussis (1, 2, 4, 7, 15, 30, 60, 120 jours) et tout de suite quand tu rates. Les séances sont courtes ; tu peux les enchaîner. La journée change à 4 h du matin.</li>
   <li><b>Le niveau monte avec toi</b> : d'abord reconnaître (QCM), puis te rappeler (cartes : « Raté », « Hésité » ou « Su ») et remettre des phrases en ordre, puis écrire la darija toi-même.</li>
   <li><b>Tes fautes relevées</b> en cours reviennent aussi : la forme que tu avais écrite, et la forme correcte.</li>
-  <li><b>Dialogues</b> : cache le français, ou joue un rôle.</li>
+  <li><b>Dialogues</b> : cache le français, joue un rôle, ou remets les répliques dans l'ordre. Le dialogue est alors validé (tu peux aussi le valider toi-même avec « J'ai travaillé ce dialogue »).</li>
+  <li><b>Lecture de l'arabe</b> : pendant les révisions, des questions montrent le mot en arabe seul, à traduire ou à prononcer. La fréquence se règle dans Réglages ; « Séance libre » propose aussi « Lire l'arabe » et « Alphabet ».</li>
   <li><b>Badges et série</b> : ils sont dans l'onglet Progrès.</li></ol>
   <h3>Bloc-notes</h3><p>Un bug, une idée, une erreur dans le cours ? Touche le crayon en haut de l'écran, ou « Signaler » sur une carte, un mot ou un dialogue : l'endroit exact est noté tout seul. Dans « Mes notes », « Envoyer mes notes » crée un fichier texte à me transmettre (par exemple en l'enregistrant dans ton dossier Arabe sur OneDrive). Les notes sont aussi dans l'export de ta progression.</p>
   <h3>Écrire en darija</h3><p>3 = ع, 7 = ح, 9 = ق, gh = غ, kh = خ, ch = ش, ou = و. Les touches 3, 7, 9, ' et - sont au-dessus du clavier. Les tirets, apostrophes, espaces et majuscules ne comptent pas ; une seule lettre de différence dans un mot de 4 lettres ou plus compte « Hésité » (bzzaf ≠ bzaf). Si ta variante est juste, touche « J'avais juste ».</p>
@@ -1080,5 +1150,5 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     $('#rl').onclick = () => location.reload();
   });
 }
-window.__darija = { P: () => P, R: () => R, ITEMS, FIXES, ALPHA, LEX, DIALOGS, LEARN, NAV, grade, save, route, dueList, nextNew, studyStart, addDays, endOfToday, dayKey, streak, accepted, fromV1, daily, checkBadges, BADGES, bonus };   // pour les tests
+window.__darija = { P: () => P, R: () => R, ITEMS, FIXES, ALPHA, LEX, DIALOGS, LEARN, NAV, grade, save, route, dueList, nextNew, studyStart, addDays, endOfToday, dayKey, streak, accepted, fromV1, daily, checkBadges, BADGES, bonus, taskFor };   // pour les tests
 })();
