@@ -249,3 +249,24 @@ textarea{padding:.55rem .65rem;font:inherit;font-size:1rem}
 .cand .fr{font-size:.88rem;color:var(--muted)}
 .cand.wrong{border-color:var(--x);background:var(--x-soft);opacity:.6;animation:shake .35s}
 @media (prefers-reduced-motion:reduce){.cand.wrong{animation:none}}
+
+/* apprendre par section */
+.secs{display:grid;gap:.4rem;margin:.6rem 0}
+.secb{display:flex;justify-content:space-between;align-items:center;gap:.6rem;width:100%;text-align:left;border:1.5px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink);padding:.55rem .7rem;min-height:2.9rem;font-size:.95rem;cursor:pointer}
+.secb .stt{flex:1;min-width:0;font-weight:600}
+.secb .scount{flex:none;font-size:.78rem;font-weight:700;color:var(--v)}
+.secb.done{opacity:.6;cursor:default}.secb.done .scount{color:var(--ok)}
+.seclearn{margin:-.2rem 0 .5rem}
+/* dialogue à remettre en ordre (glisser-déposer) */
+.olist{display:grid;gap:.4rem;margin:.5rem 0}
+.ocard{display:flex;gap:.45rem;align-items:center;border:1.5px solid var(--line);border-radius:12px;background:var(--card);color:var(--ink);padding:.4rem .4rem .4rem .2rem;position:relative}
+.ocard .grip{flex:none;align-self:stretch;display:flex;align-items:center;justify-content:center;width:2rem;color:var(--muted);font-weight:800;letter-spacing:-.15em;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none}
+.ocard .who{flex:none;min-width:2.1rem;height:2.1rem;padding:0 .2rem;border-radius:1.05rem;border:2px solid var(--d);color:var(--d);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.8rem}
+.ocard .ct{display:flex;flex-direction:column;flex:1;min-width:0}
+.ocard .dj{font-weight:700}.ocard .ar{text-align:right;font-size:1.05em}.ocard .fr{font-size:.85rem;color:var(--muted)}
+.ocard .omove{flex:none;display:flex;flex-direction:column;gap:.25rem}
+.ocard .omove button{width:2.2rem;height:2.1rem;border:1.5px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font-weight:800}
+.ocard .omove button[disabled]{opacity:.3}
+.ocard.drag{z-index:5;box-shadow:0 8px 22px rgba(0,0,0,.25);border-color:var(--v);transition:none}
+.ocard.ok{border-color:var(--ok);background:var(--ok-soft)}
+.ocard.bad{border-color:var(--x);background:var(--x-soft)}

@@ -265,7 +265,7 @@ function vHTML(b) {
   return `<div class="lab l-vocab">${IC.vocab}${LABELS[b.kind] || 'Vocabulaire'}${tt}</div><div class="vocab ${b.kind === 'conj' ? 'conj' : ''}">${b.rows.map(r => `<div class="it rv" ${r[5] ? `data-k="${esc(r[5])}"` : ''}><div class="fr">${r[0]}</div><div class="dj">${r[1]}</div><div class="ar">${esc(alpha ? r[2].replace(/ · /g, '   ') : r[2])}</div></div>`).join('')}</div>`;
 }
 function blockHTML(b, l, extra) {
-  if (b.t === 'h2') return `<h2 id="s${extra}">${b.x}</h2>`;
+  if (b.t === 'h2') return `<h2 id="s${extra}">${b.x}</h2><div class="seclearn" data-sec="${extra}"></div>`;
   if (b.t === 'h3') return `<h3>${b.x}</h3>`;
   if (b.t === 'v') return vHTML(b);
   if (b.t === 'rule') {
@@ -373,7 +373,7 @@ function screenNotes() {
   const all = liveNotes().slice().reverse(); const open = all.filter(n => !n.done), done = all.filter(n => n.done);
   const card = n => `<div class="card note ${n.done ? 'isdone' : ''}" data-id="${esc(n.id)}"><div class="nh"><span class="tag t-${n.kind}">${NOTE_KINDS[n.kind]}</span><span class="muted">${new Date(n.ts).toLocaleDateString('fr-FR')}</span></div>
     ${n.ctx ? `<div class="muted nctx">${esc(n.ctx)}</div>` : ''}<div class="ntext">${esc(n.text)}</div>
-    <div class="chips"><button type="button" class="btn small ghost" data-done>${n.done ? 'Rouvrir' : 'Marquer réglée'}</button><button type="button" class="btn small ghost" data-del>Supprimer</button></div></div>`;
+    <div class="chips">${n.done ? '' : '<button type="button" class="btn small ghost" data-edit>Modifier</button>'}<button type="button" class="btn small ghost" data-done>${n.done ? 'Rouvrir' : 'Marquer réglée'}</button><button type="button" class="btn small ghost" data-del>Supprimer</button></div></div>`;
   view.innerHTML = `<p class="muted">Note ici un bug, une idée ou une erreur dans le cours. Le bouton « Signaler », sur chaque carte de séance et chaque ligne de leçon, ajoute tout seul l'endroit exact. Envoie-moi ensuite tes notes : je les lis et je corrige.</p>
   <div class="card"><div class="chips" id="nk">${Object.entries(NOTE_KINDS).map(([v, t]) => chip(`data-v="${v}"`, v === noteKind, t)).join('')}</div>
     <textarea id="nt" placeholder="Écris ta note…" aria-label="Nouvelle note"></textarea><button type="button" class="btn wide" id="na">Ajouter la note</button></div>
@@ -389,7 +389,16 @@ function screenNotes() {
   };
   $('#ncopy').onclick = () => { if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(notesText()).then(() => toast('Notes copiées.')).catch(() => toast('Copie impossible : utilise « Envoyer ».')); else toast('Copie impossible : utilise « Envoyer ».'); };
   view.onclick = e => {
-    const c = e.target.closest('.note'); if (!c) return; const n = P.notes.find(x => x.id === c.dataset.id); if (!n) return;
+    const c = e.target.closest('.note'); if (!c || e.target.closest('textarea')) return; const n = P.notes.find(x => x.id === c.dataset.id); if (!n) return;
+    if (e.target.closest('[data-edit]')) {   // modifier une note en attente : type et texte
+      let k = n.kind;
+      c.innerHTML = `<div class="chips" data-nk>${Object.entries(NOTE_KINDS).map(([v, t]) => chip(`data-v="${v}"`, v === k, t)).join('')}</div>${n.ctx ? `<div class="muted nctx">${esc(n.ctx)}</div>` : ''}<textarea data-et aria-label="Modifier la note">${esc(n.text)}</textarea><div class="row2"><button type="button" class="btn ghost" data-cancel>Annuler</button><button type="button" class="btn" data-save>Enregistrer</button></div>`;
+      const ta = $('[data-et]', c); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
+      $('[data-nk]', c).onclick = ev => { ev.stopPropagation(); const ch = ev.target.closest('.chip'); if (!ch) return; k = ch.dataset.v; $$('[data-nk] .chip', c).forEach(x => { x.classList.toggle('on', x === ch); x.setAttribute('aria-pressed', x === ch); }); };
+      $('[data-cancel]', c).onclick = ev => { ev.stopPropagation(); screenNotes(); };
+      $('[data-save]', c).onclick = ev => { ev.stopPropagation(); const t = ta.value.trim(); if (!t) return ta.focus(); n.text = t.slice(0, 3000); n.kind = k; n.upd = Date.now(); save(); toast('Note modifiée.'); screenNotes(); };
+      return;
+    }
     if (e.target.closest('[data-done]')) { n.done = !n.done; n.upd = Date.now(); save(); updateBadge(); screenNotes(); }
     else if (e.target.closest('[data-del]')) { if (!confirm('Supprimer cette note ?')) return; n.del = true; n.text = ''; n.upd = Date.now(); save(); updateBadge(); screenNotes(); }
   };
@@ -543,7 +552,7 @@ function screenLesson(id) {
   const k = NAV.indexOf(id), prev = NAV[k - 1], next = NAV[k + 1];
   view.innerHTML = `<h1 class="lt">${l.title}</h1><div class="ar" style="text-align:left">${esc(l.ar)}</div><p class="muted" style="margin:.2rem 0">${l.sub}</p>
   ${s.n ? `<div class="legend">${s.seen} en révision sur ${s.n} éléments · ${s.known} acquis${s.due ? ' · ' + s.due + ' à réviser aujourd\'hui' : ''}</div>
-  <div class="row2"><button type="button" class="btn" id="lrn" ${nNew ? '' : 'disabled'}>Apprendre${nNew ? ' (' + Math.min(nNew, 10) + ')' : ''}</button><button type="button" class="btn ghost" id="rvw" ${s.seen ? '' : 'disabled'}>Réviser la leçon</button></div>
+  <div class="row2"><button type="button" class="btn" id="lrn" ${nNew ? '' : 'disabled'}>Apprendre${nNew ? ' (' + nNew + ')' : ''}</button><button type="button" class="btn ghost" id="rvw" ${s.seen ? '' : 'disabled'}>Réviser la leçon</button></div>
   ${nNew ? `<a class="btn small ghost" href="#/tri/${id}" style="margin-bottom:.4rem">Déjà vu en cours ? Coche ce que tu connais (${nNew})</a>` : ''}` : (ALPHA.length && id === 'L00' ? `<button type="button" class="btn small ghost" id="abc">S'entraîner à reconnaître les lettres</button>` : '')}
   <div class="lsteps" id="lsteps"></div>
   ${l.obj.length ? `<div class="card"><b>Objectifs</b><ul style="margin:.2rem 0;padding-left:1.2rem">${l.obj.map(o => `<li>${o}</li>`).join('')}</ul></div>` : ''}
@@ -559,13 +568,15 @@ function screenLesson(id) {
     const steps = [['lire', 'Lire', q.read ? '✓' : '', !!q.read], s.n ? ['mots', 'Mots', `${q.s.seen}/${q.s.n}`, q.s.seen === q.s.n] : null, q.dl ? ['dlg', 'Dialogues', `${q.dlDone}/${q.dl}`, q.dlDone === q.dl] : null, q.ex ? ['ex', 'Exercices', `${q.exDone}/${q.ex}`, q.exDone === q.ex] : null].filter(Boolean);
     $('#lsteps').innerHTML = steps.map(([go, t, v, ok], n) => `<button type="button" class="lstep ${ok ? 'ok' : ''}" data-go="${go}"><b>${n + 1}</b> ${t}${v ? ' ' + v : ''}</button>`).join('<span class="arrow" aria-hidden="true">›</span>')
       + `<div class="legend" style="width:100%">Touche une étape pour y aller. La lecture se valide en bas de la leçon${q.dl ? ', un dialogue en le jouant' : ''}${q.ex ? ', un exercice en le marquant comme fait' : ''}.</div>`;
+    const ss = sectionsOf(id);
+    $$('#lbody .seclearn').forEach(el => { const x = ss.find(y => y.i === +el.dataset.sec); el.innerHTML = x && x.left.length ? `<button type="button" class="btn small ghost" data-learnsec="${x.i}">Apprendre cette section (${x.left.length})</button>` : x ? '<span class="tag t-ok">Section apprise</span>' : ''; });
     $$('#lbody [data-dlg]').forEach(el => { const dd = P.dlg[id + '/' + el.dataset.dlg]; el.innerHTML = dd ? `<span class="tag t-ok">Validé le ${esc(dd.split('-').reverse().join('/'))}</span>` : '<span class="tag">Pas encore validé</span>'; });
     const dnext = DIALOGS.find(d => d.id === id && !P.dlg[id + '/' + d.idx]);
     $('#lend').innerHTML = q.read
       ? `<b>Leçon lue le ${esc(q.read.split('-').reverse().join('/'))}.</b><div class="muted">La suite : ${nNew ? 'apprends les mots, ' : ''}${dnext ? 'joue un dialogue, ' : ''}puis fais les exercices (étapes en haut de la leçon).</div><div class="chips">${nNew ? '<button type="button" class="btn small" id="lrn2">Apprendre les mots</button>' : ''}${dnext ? `<a class="btn small ghost" href="#/dialogue/${id}/${dnext.idx}">Jouer un dialogue</a>` : ''}<button type="button" class="btn small ghost" id="lnote">Ajouter une note sur cette leçon</button></div>`
       : `<b>Tu as tout lu ?</b><div class="muted">Marque la leçon comme lue : c'est la première étape du parcours.</div><div class="chips"><button type="button" class="btn small" id="lread">J'ai lu cette leçon</button><button type="button" class="btn small ghost" id="lnote">Ajouter une note sur cette leçon</button></div>`;
     if ($('#lread')) $('#lread').onclick = () => { P.read[id] = dayKey(); save(); drawSteps(); toast(MZ ? 'Mzyan ! Leçon lue.' : 'Leçon lue.'); };
-    if ($('#lrn2')) $('#lrn2').onclick = () => startLearn(nextNew(10, [id]));
+    if ($('#lrn2')) $('#lrn2').onclick = () => learnPicker(id);
     $('#lnote').onclick = () => noteSheet('Leçon ' + lessonLabel(id) + ' · ' + strip(l.title), 'contenu');
   };
   stick(); focusRows(); drawSteps();
@@ -573,7 +584,7 @@ function screenLesson(id) {
     const b = e.target.closest('[data-go]'); if (!b) return; stick();
     const to = el => { if (el) el.scrollIntoView({ behavior: 'smooth' }); };
     if (b.dataset.go === 'lire') to($('#lbody'));
-    else if (b.dataset.go === 'mots') { if (nextNew(1, [id]).length) startLearn(nextNew(10, [id])); else revLesson(); }
+    else if (b.dataset.go === 'mots') { if (nextNew(1, [id]).length) learnPicker(id); else revLesson(); }
     else if (b.dataset.go === 'dlg') { const dn = DIALOGS.find(x => x.id === id && !P.dlg[id + '/' + x.idx]) || DIALOGS.find(x => x.id === id); to(dn && $('#d' + dn.idx)); }
     else if (b.dataset.go === 'ex') { const exs = $$('#lbody .ex'); to(exs.find(x => !P.ex[x.dataset.ex]) || exs[0]); }
   };
@@ -584,12 +595,13 @@ function screenLesson(id) {
     if (rv && lessonMode !== 'read') rv.classList.toggle('show');
     else if (rv && rv.dataset.k && !e.target.closest('.more') && IMAP[rv.dataset.k]) itemPanel(rv, IMAP[rv.dataset.k], false);   // lecture : fiche du mot
     const sb = e.target.closest('[data-sol]'); if (sb) { const box = sb.closest('.ex'); const sols = $$('.sol', box); const show = sols.some(x => x.hidden); sols.forEach(x => { x.hidden = !show; }); sb.textContent = show ? 'Cacher le corrigé' : 'Voir le corrigé'; }
+    const ls = e.target.closest('[data-learnsec]'); if (ls) { const x = sectionsOf(id).find(y => y.i === +ls.dataset.learnsec); if (x) startLearn(x.left, { id, sec: x.i, title: x.title }); return; }
     const db = e.target.closest('[data-done]'); if (db) { const box = db.closest('.ex'); const k2 = box.dataset.ex; if (P.ex[k2]) delete P.ex[k2]; else { P.ex[k2] = dayKey(); bonus(); } save(); drawSteps(); $('.done', box).textContent = P.ex[k2] ? '✓ fait le ' + P.ex[k2] : ''; db.textContent = P.ex[k2] ? 'Refaire plus tard' : 'Marquer comme fait'; }
   };
   $('#lbody').onkeydown = e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.classList.contains('rv')) { e.preventDefault(); e.target.click(); } };
   if ($('#abc')) $('#abc').onclick = () => { free = { ids: [], src: 'alpha', mode: 'qcm', n: 20 }; runFree(); };
   if (!s.n) return;
-  $('#lrn').onclick = () => startLearn(nextNew(10, [id]));
+  $('#lrn').onclick = () => learnPicker(id);
   const revLesson = () => { const its = ITEMS.filter(i => i.refs.includes(id) && st(i)); startSession('Révision · ' + lessonLabel(id), pickWeighted(its, 20).map(it => ({ type: taskFor(it), it })), revLesson, 'free'); };
   $('#rvw').onclick = revLesson;
 }
@@ -669,7 +681,7 @@ function screenLexique() {
 /* ---------- Dialogues ---------- */
 function screenDialogues() {
   setHead('Dialogues');
-  view.innerHTML = '<p class="muted">Lis-les à voix haute, puis entraîne-toi : cache le français pour comprendre, joue un rôle (tes répliques sont cachées, tu les dis avant de vérifier) ou remets les répliques dans l\'ordre. Un dialogue validé compte pour sa leçon et pour l\'étape « Pratiquer » du jour.</p>' + PARTS.map(p => {
+  view.innerHTML = '<p class="muted">Lis-les à voix haute, puis entraîne-toi : cache le français pour comprendre, joue un rôle (tes répliques sont cachées, tu les dis avant de vérifier) ou remets toutes les répliques dans l\'ordre en les faisant glisser. Un dialogue validé compte pour sa leçon et pour l\'étape « Pratiquer » du jour.</p>' + PARTS.map(p => {
     const ds = DIALOGS.filter(d => p.ids.includes(d.id));
     return ds.length ? `<div class="part">Partie ${esc(p.n)} · ${esc(p.title)}</div>` + ds.map(d => { const done = P.dlg[d.id + '/' + d.idx]; return `<a class="card lrow" href="#/dialogue/${d.id}/${d.idx}"><div class="num sm">${lessonLabel(d.id)}</div><div><div class="t">${d.title} ${done ? '<span class="tag t-ok">Validé</span>' : ''}</div><div class="s">${d.lines.length} répliques · ${esc([...new Set(d.lines.map(x => x[0]))].join(', '))}</div></div></a>`; }).join('') : '';
   }).join('');
@@ -698,29 +710,64 @@ function screenDialogue(id, idx) {
     $('#dnote').onclick = () => noteSheet('Dialogue ' + lessonLabel(id) + ' · ' + strip(d.title), 'contenu');
     $('#dval').onclick = () => credit('');
   };
-  const drawOrder = () => {   // jeu : reconstituer le dialogue, réplique après réplique
-    let placed = 0, miss = 0, showFr = false, cands = [];
-    const pick = () => {   // la bonne réplique et jusqu'à trois autres, de préférence du même locuteur
-      const exp = d.lines[placed]; const uniq = [];
-      d.lines.slice(placed + 1).forEach(x => { if (!same(x, exp) && !uniq.some(u => same(u, x))) uniq.push(x); });
-      shuffle(uniq).sort((a, b) => (b[0] === exp[0]) - (a[0] === exp[0]));
-      cands = shuffle([exp, ...uniq.slice(0, 3)]);
-    };
+  const drawOrder = () => {   // jeu : toutes les répliques mélangées, à remettre dans l'ordre par glisser-déposer (ou flèches)
+    const n = d.lines.length; let order = shuffle(d.lines.map((_, k) => k));
+    if (order.every((v, k) => same(d.lines[v], d.lines[k]))) order.reverse();
+    let tries = 0, showFr = false;
+    const card = (v, pos) => { const x = d.lines[v]; return `<div class="ocard" data-v="${v}"><span class="grip" aria-hidden="true">⋮⋮</span><span class="who" aria-hidden="true">${esc(ini[x[0]])}</span><span class="ct"><span class="dj">${x[2]}</span><span class="ar">${esc(x[3])}</span>${showFr ? `<span class="fr">${x[1]}</span>` : ''}</span><span class="omove"><button type="button" data-up aria-label="Monter la réplique ${pos + 1}" ${pos ? '' : 'disabled'}>↑</button><button type="button" data-dn aria-label="Descendre la réplique ${pos + 1}" ${pos < n - 1 ? '' : 'disabled'}>↓</button></span></div>`; };
     const render = () => {
-      const done = placed >= d.lines.length;
-      view.innerHTML = head('order') + '<p class="muted">Reconstitue le dialogue : touche la réplique qui vient ensuite.</p>' + dialogHTML(d, 'read', placed)
-        + (done ? '' : `<div id="dord"><div class="lab">Réplique ${placed + 1} sur ${d.lines.length} : laquelle vient maintenant ?</div><div class="cands">${cands.map((x, n) => `<button type="button" class="cand" data-n="${n}"><span class="who" aria-hidden="true">${esc(ini[x[0]])}</span><span class="ct"><span class="dj">${x[2]}</span><span class="ar">${esc(x[3])}</span>${showFr ? `<span class="fr">${x[1]}</span>` : ''}</span></button>`).join('')}</div>${chip('id="dfr"', showFr, 'Aide : afficher le français')}</div>`)
-        + foot();
-      bindCommon();
-      if (done) { credit(miss ? `reconstitué avec ${plural(miss, 'erreur')}` : 'reconstitué sans erreur'); return; }
-      $('#dfr').onclick = () => { showFr = !showFr; render(); };
-      $('.cands').onclick = e => {
-        const b = e.target.closest('.cand'); if (!b || b.disabled) return;
-        if (same(cands[+b.dataset.n], d.lines[placed])) { placed++; if (placed < d.lines.length) pick(); render(); const o = $('#dord') || $('#dend'); if (o) o.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
-        else { miss++; b.classList.add('wrong'); b.disabled = true; if (navigator.vibrate) navigator.vibrate(30); }
+      view.innerHTML = head('order') + `<p class="muted">Remets les ${n} répliques dans l'ordre : fais glisser une carte par sa poignée ⋮⋮ (ou utilise les flèches), puis vérifie.</p>`
+        + `<div class="lab l-dlg">${IC.dlg}Dialogue<span class="tt">${d.title}</span></div><div class="cast">${sp.map(s => `<b>${esc(ini[s])}</b> = ${esc(s)}`).join(' · ')}</div>`
+        + `<div class="olist" id="olist">${order.map(card).join('')}</div><div id="ores"></div>`
+        + `<div class="row2"><button type="button" class="btn ghost" id="dfr">${showFr ? 'Cacher le français' : 'Aide : afficher le français'}</button><button type="button" class="btn" id="dchk">Vérifier</button></div>` + foot();
+      bindCommon(); bind();
+    };
+    const refresh = () => { order = $$('#olist .ocard').map(c => +c.dataset.v); $$('#olist .ocard').forEach((c, k) => { c.classList.remove('ok', 'bad'); $('[data-up]', c).disabled = !k; $('[data-dn]', c).disabled = k === n - 1; }); $('#ores').innerHTML = ''; };
+    const bind = () => {
+      const list = $('#olist');
+      $('#dfr').onclick = () => { order = $$('#olist .ocard').map(c => +c.dataset.v); showFr = !showFr; render(); };
+      list.onclick = e => {
+        const b = e.target.closest('[data-up],[data-dn]'); if (!b) return; const c = b.closest('.ocard');
+        if (b.hasAttribute('data-up') && c.previousElementSibling) list.insertBefore(c, c.previousElementSibling);
+        else if (b.hasAttribute('data-dn') && c.nextElementSibling) list.insertBefore(c.nextElementSibling, c);
+        refresh(); const f = $(b.hasAttribute('data-up') ? '[data-up]' : '[data-dn]', c); (f.disabled ? $('button:not([disabled])', c) : f).focus();
+      };
+      $$('.grip', list).forEach(g => {
+        g.onpointerdown = e => {
+          e.preventDefault(); const el = g.closest('.ocard'); let startY = e.clientY, lastY = e.clientY, timer = null; const origY = e.clientY;
+          g.setPointerCapture(e.pointerId); el.classList.add('drag');
+          const step = () => {   // déplace la carte au-delà de ses voisines quand le doigt dépasse leur milieu
+            el.style.transform = `translateY(${lastY - startY}px)`;
+            const prev = el.previousElementSibling, next = el.nextElementSibling, before = el.offsetTop;
+            if (next && lastY > next.getBoundingClientRect().top + next.offsetHeight / 2) list.insertBefore(next, el);
+            else if (prev && lastY < prev.getBoundingClientRect().top + prev.offsetHeight / 2) list.insertBefore(el, prev);
+            else return;
+            startY += el.offsetTop - before; el.style.transform = `translateY(${lastY - startY}px)`;
+          };
+          const auto = () => {   // défilement quand on approche du bord de l'écran
+            const top = 90, bot = innerHeight - 110;   // seulement si le doigt va vers ce bord, plus vite tout près du bord
+            const v = lastY < top && lastY < origY - 20 ? -Math.round(8 + 14 * (top - lastY) / top) : lastY > bot && lastY > origY + 20 ? Math.round(8 + 14 * (lastY - bot) / 110) : 0;
+            const y0 = window.scrollY; if (v) window.scrollBy(0, v); const dv = window.scrollY - y0;   // on ne compense que le défilement réel (rien en haut ou en bas de la page)
+            if (dv) { startY -= dv; step(); }
+            timer = dv ? requestAnimationFrame(auto) : null;
+          };
+          g.onpointermove = ev => { lastY = ev.clientY; step(); if (!timer) auto(); };
+          g.onpointerup = g.onpointercancel = () => { if (timer) cancelAnimationFrame(timer); timer = null; g.onpointermove = g.onpointerup = g.onpointercancel = null; el.style.transform = ''; el.classList.remove('drag'); refresh(); };
+        };
+      });
+      $('#dchk').onclick = () => {
+        order = $$('#olist .ocard').map(c => +c.dataset.v); tries++;
+        const good = order.map((v, k) => same(d.lines[v], d.lines[k]));
+        $$('#olist .ocard').forEach((c, k) => { c.classList.toggle('ok', good[k]); c.classList.toggle('bad', !good[k]); });
+        const nOk = good.filter(Boolean).length;
+        if (nOk === n) {
+          $('#ores').innerHTML = ''; $$('#olist .omove, #olist .grip').forEach(x => x.remove()); $('#dchk').closest('.row2').remove();
+          credit(tries === 1 ? 'reconstitué du premier coup' : `reconstitué en ${tries} essais`);
+          $('#dend').scrollIntoView({ block: 'center', behavior: 'smooth' });
+        } else { $('#ores').innerHTML = `<div class="res wrong">${nOk} réplique${nOk > 1 ? 's' : ''} bien placée${nOk > 1 ? 's' : ''} sur ${n}. Déplace les cartes en rouge, puis vérifie de nouveau.</div>`; if (navigator.vibrate) navigator.vibrate(30); }
       };
     };
-    pick(); render();
+    render();
   };
   const draw = mode => {
     curMode = mode; credited = false;
@@ -753,7 +800,32 @@ function startReview() {
   const due = dueList().slice(0, P.settings.maxReview);
   startSession('Révision du jour', shuffle(due.map(it => ({ type: taskFor(it), it }))), () => startReview(), 'review');
 }
-function startLearn(items) {
+function sectionsOf(id) {   // sections (titres de niveau 2) d'une leçon, avec leurs éléments et ce qui reste à apprendre
+  const out = []; let cur = null;
+  (byId[id] ? byId[id].blocks : []).forEach(b => {
+    if (b.t === 'h2') { cur = { i: out.length, title: strip(b.x), items: [] }; out.push(cur); return; }
+    if (b.t !== 'v' || b.kind === 'ref') return;
+    if (!cur) { cur = { i: 0, title: 'Début de la leçon', items: [] }; out.push(cur); }
+    b.rows.forEach(r => { const it = r[5] && IMAP[r[5]]; if (it && !cur.items.includes(it)) cur.items.push(it); });
+  });
+  out.forEach(x => { x.left = x.items.filter(i => !st(i) && (P.settings.phrases || i.kind !== 'phr')); });
+  return out.filter(x => x.items.length);
+}
+function nextSection(id, from) {   // la section à apprendre ensuite : celle en cours si elle n'est pas finie, sinon la suivante
+  const ss = sectionsOf(id); const start = Math.max(0, ss.findIndex(x => x.i === from));
+  return ss.slice(start).find(x => x.left.length) || ss.find(x => x.left.length) || null;
+}
+function learnPicker(id) {   // choisir la section à apprendre
+  const old = $('#sheet'); if (old) old.remove();
+  const ss = sectionsOf(id); const el = document.createElement('div'); el.id = 'sheet';
+  el.innerHTML = `<div class="sheet-in" role="dialog" aria-label="Apprendre une section"><h3>Apprendre ${lessonName(id)}</h3><div class="muted">Choisis une section : tous ses nouveaux éléments, par groupes de cinq. Tu peux t'arrêter quand tu veux, ce qui est appris reste acquis.</div>
+    <div class="secs">${ss.map(x => `<button type="button" class="secb ${x.left.length ? '' : 'done'}" data-i="${x.i}" ${x.left.length ? '' : 'disabled'}><span class="stt">${esc(x.title)}</span><span class="scount">${x.left.length ? x.left.length + ' à apprendre' : '✓ appris'}</span></button>`).join('')}</div>
+    <button type="button" class="btn wide ghost" id="pc">Fermer</button></div>`;
+  document.body.appendChild(el);
+  $('#pc', el).onclick = () => el.remove(); el.onclick = e => { if (e.target === el) el.remove(); };
+  $('.secs', el).onclick = e => { const b = e.target.closest('.secb'); if (!b || b.disabled) return; const x = ss.find(y => y.i === +b.dataset.i); el.remove(); startLearn(x.left, { id, sec: x.i, title: x.title }); };
+}
+function startLearn(items, from) {
   if (!items.length) return toast('Plus rien de nouveau ici.');
   const tasks = [];
   for (let k = 0; k < items.length; k += 5) {   // par groupes de 5 : présentation, puis vérification
@@ -762,7 +834,8 @@ function startLearn(items) {
     if (batch.length >= 3) tasks.push({ type: 'pairs', it: batch[0], its: batch });   // un jeu d'association avant la vérification
     shuffle(batch.slice()).forEach(it => tasks.push({ type: 'qcm-fr', it, learn: true }));
   }
-  startSession('Apprendre', tasks, null, 'learn');
+  startSession(from && from.title ? 'Apprendre · ' + from.title : 'Apprendre', tasks, null, 'learn');
+  R.from = from || { id: items[0].id, sec: (sectionsOf(items[0].id).find(x => x.items.includes(items[items.length - 1])) || {}).i };
 }
 function startFixes() {
   const f = FIXES.filter(x => !st(x) || isDue(x)).slice(0, 20);
@@ -946,13 +1019,16 @@ function endSession() {
   finalize();
   document.body.classList.remove('in-session');
   const keys = Object.keys(R.first); const good = keys.filter(k => R.first[k] > 0).length;
-  const again = R.again; const wrong = R.wrong; const kind = R.kind;
+  const again = R.again; const wrong = R.wrong; const kind = R.kind; const from = R.from;
   if ((kind === 'fix' || kind === 'free') && (keys.length >= 5 || R.played >= 1)) bonus();   // compte pour l'étape « Pratiquer »
   const nb = checkBadges(); const d = daily(); const left = d.left, nLearn = Math.min(left, nextNew(left).length); const dg = nextDialogue();
   const ratio = keys.length ? good / keys.length : 1;
   const msg = !keys.length ? 'Séance terminée.' : ratio >= 0.9 ? (MZ ? 'Mzyan bzzaf !' : 'Excellent !') : ratio >= 0.6 ? (MZ ? 'Mzyan !' : 'Bien joué !') : 'Ça rentre en répétant : les éléments ratés reviennent vite.';
   setHead(R.title, false);
   window.scrollTo(0, 0);
+  const nx = kind === 'learn' && from ? nextSection(from.id, from.sec) : null;
+  const cont = nx ? `<button type="button" class="btn wide" id="cont">${nx.i === from.sec ? 'Continuer cette section' : 'Section suivante : ' + esc(nx.title)} (${nx.left.length} à apprendre)</button><button type="button" class="btn wide ghost" id="pick">Choisir une autre section de ${lessonName(from.id)}</button>`
+    : kind === 'learn' && from && byId[from.id] ? `<div class="win">Tu as appris tous les éléments de ${lessonName(from.id)}${MZ ? ' · <b>mzyan bzzaf !</b>' : ''}</div>` : '';
   const nextStep = d.due.length ? `<button type="button" class="btn wide" id="rev">Continuer la révision du jour (${Math.min(d.due.length, P.settings.maxReview)}${d.due.length > P.settings.maxReview ? ' sur ' + d.due.length : ''})</button>`
     : !d.s2 && nLearn ? `<button type="button" class="btn wide" id="learn2">Étape suivante : apprendre ${nLearn} nouveau${nLearn > 1 ? 'x' : ''}</button>`
     : !d.s3 && dg ? `<a class="btn wide" href="#/dialogue/${dg.id}/${dg.idx}">Étape suivante : jouer un dialogue</a>`
@@ -960,12 +1036,14 @@ function endSession() {
   view.innerHTML = `<div class="card" style="text-align:center">${keys.length ? `<div class="big">${good} / ${keys.length}</div><div class="muted">réussis du premier coup</div>` : ''}<div class="endmsg">${msg}</div><div class="muted">Parcours du jour : ${d.done}/3</div></div>`
     + nb.map(b => `<div class="card badge-new"><b>Nouveau badge : ${esc(b[1])}</b><div class="muted">${esc(b[2])}</div></div>`).join('')
     + (wrong.length ? `<div class="lab l-fix">${IC.fix}À retenir</div><div class="vocab">${wrong.map(i => `<div class="it"><div class="fr">${i.fix ? 'et non <s>' + esc(i.wrong) + '</s>' : i.fr}</div><div class="dj">${i.fix ? esc(i.right) : i.dj}</div><div class="ar">${esc(i.ar)}</div></div>`).join('')}</div>` : '')
-    + nextStep
+    + cont + nextStep
     + (again ? '<button type="button" class="btn wide ghost" id="again">Une autre séance du même type</button>' : '')
     + '<button type="button" class="btn wide ghost" id="home">Retour à l\'accueil</button>';
   R = null;
   if ($('#rev')) $('#rev').onclick = () => startReview();
   if ($('#learn2')) $('#learn2').onclick = () => startLearn(nextNew(left));
+  if ($('#cont')) $('#cont').onclick = () => startLearn(nx.left, { id: from.id, sec: nx.i, title: nx.title });
+  if ($('#pick')) $('#pick').onclick = () => learnPicker(from.id);
   if ($('#again')) $('#again').onclick = () => again();
   $('#home').onclick = () => location.replace('#/');
   if (nb.length || (d.done === 3 && keys.length && celebrated !== dayKey())) { if (d.done === 3) celebrated = dayKey(); celebrate(); }
@@ -1096,7 +1174,7 @@ function screenAide() {
   <h3>La méthode</h3><ol>
   <li><b>Trie les leçons déjà vues en cours</b> : dans chaque leçon, « Coche ce que tu connais ». Ce que tu sais part en révision espacée.</li>
   <li><b>Chaque leçon a ses étapes</b> : la lire, apprendre ses mots, jouer ses dialogues, faire ses exercices. Touche une étape, en haut de la leçon, pour y aller. La lecture se valide en bas de la leçon, un dialogue en le jouant, un exercice en le marquant comme fait. « Cacher la darija » ou « Cacher le français » transforme les tableaux en test ; en lecture, touche un mot pour le réviser aujourd'hui ou le signaler.</li>
-  <li><b>Apprendre</b> : les nouveaux éléments arrivent dans l'ordre du cours, par groupes de cinq : présentation, jeu d'association, puis QCM. Si tu en connais un, touche « Je connais déjà ».</li>
+  <li><b>Apprendre</b> : depuis l'accueil, les nouveaux éléments arrivent dans l'ordre du cours, selon ton objectif du jour. Depuis une leçon, tu apprends <b>section par section</b> (« Apprendre », ou le bouton sous chaque titre), sans limite. Les éléments arrivent par groupes de cinq : présentation, jeu d'association, puis QCM ; à la fin, un bouton enchaîne sur la suite de la section. Si tu en connais un, touche « Je connais déjà ».</li>
   <li><b>Réviser</b> : l'application redonne chaque élément de plus en plus tard quand tu réussis (1, 2, 4, 7, 15, 30, 60, 120 jours) et tout de suite quand tu rates. Les séances sont courtes ; tu peux les enchaîner. La journée change à 4 h du matin.</li>
   <li><b>Le niveau monte avec toi</b> : d'abord reconnaître (QCM), puis te rappeler (cartes : « Raté », « Hésité » ou « Su ») et remettre des phrases en ordre, puis écrire la darija toi-même.</li>
   <li><b>Tes fautes relevées</b> en cours reviennent aussi : la forme que tu avais écrite, et la forme correcte.</li>
@@ -1150,5 +1228,5 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     $('#rl').onclick = () => location.reload();
   });
 }
-window.__darija = { P: () => P, R: () => R, ITEMS, FIXES, ALPHA, LEX, DIALOGS, LEARN, NAV, grade, save, route, dueList, nextNew, studyStart, addDays, endOfToday, dayKey, streak, accepted, fromV1, daily, checkBadges, BADGES, bonus, taskFor };   // pour les tests
+window.__darija = { P: () => P, R: () => R, ITEMS, FIXES, ALPHA, LEX, DIALOGS, LEARN, NAV, grade, save, route, dueList, nextNew, studyStart, addDays, endOfToday, dayKey, streak, accepted, fromV1, daily, checkBadges, BADGES, bonus, taskFor, sectionsOf };   // pour les tests
 })();
