@@ -913,6 +913,9 @@ function screenSession() {
       if (b.disabled) return;
       const ok = opts[+b.dataset.k] === good;
       $$('.choice').forEach((c, k) => { c.disabled = true; if (opts[k] === good) c.classList.add('good'); });
+      // traduction de chaque proposition, sur la même ligne
+      const gl = o => (o.letter ? (o.sound && o.sound !== o.tr ? esc(o.sound) : '') : label(o) === o.fr ? o.dj : o.fr);   // darija → français, français → darija (lettres latines)
+      $$('.choice').forEach((c, k) => { const g = gl(opts[k]); if (g) c.insertAdjacentHTML('beforeend', `<span class="gloss"> · ${g}</span>`); });
       if (!ok) b.classList.add('wrong');
       $('#after').innerHTML = (ok ? `<div class="res good">${praise()}</div>` : '<div class="res wrong">Ce n\'est pas ça. La bonne réponse :</div>') + rev + '<button type="button" class="btn wide" id="nx">Suivant</button>';
       $('#nx').onclick = guard(() => (done ? done(ok) : answer(ok ? 2 : 0)));

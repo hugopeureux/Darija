@@ -270,3 +270,5 @@ textarea{padding:.55rem .65rem;font:inherit;font-size:1rem}
 .ocard.drag{z-index:5;box-shadow:0 8px 22px rgba(0,0,0,.25);border-color:var(--v);transition:none}
 .ocard.ok{border-color:var(--ok);background:var(--ok-soft)}
 .ocard.bad{border-color:var(--x);background:var(--x-soft)}
+
+.choice .gloss{font-size:.88rem;font-weight:400;color:var(--muted)}
