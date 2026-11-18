@@ -66,8 +66,8 @@ function diffHTML(a, b) {   // a = ta réponse, b = la bonne : lettres en trop b
 
 /* ======================= progression (stockage robuste) ======================= */
 const KEY = 'darija-v2', BACKUP_KEY = 'darija-v2-avant-import', V1_KEY = 'darija-progress-v1';
-const SETTINGS = { newPerDay: [5, 10, 15, 20, 30], maxReview: [10, 20, 30, 50, 9999], font: [0.9, 1, 1.15, 1.3], arabic: [2, 1, 0], phrases: [true, false] };
-const DEFAULT_SETTINGS = { newPerDay: 15, maxReview: 20, font: 1, arabic: 2, phrases: true };
+const SETTINGS = { newPerDay: [5, 10, 15, 20, 30], reviewPerDay: [30, 50, 80, 120, 9999], maxReview: [10, 20, 30, 50, 9999], font: [0.9, 1, 1.15, 1.3], arabic: [2, 1, 0], phrases: [true, false] };
+const DEFAULT_SETTINGS = { newPerDay: 20, reviewPerDay: 50, maxReview: 20, font: 1, arabic: 2, phrases: true };
 const NOTE_KINDS = { bug: 'Bug', idee: 'Amélioration', contenu: 'Erreur dans le cours' };
 const num = (x, d = 0) => (typeof x === 'number' && isFinite(x) ? x : d);
 const DATE = /^\d{4}-\d\d-\d\d$/;
@@ -87,7 +87,7 @@ function normalize(p) {   // valide et nettoie une progression (stockée ou impo
   out.notes = (Array.isArray(p.notes) ? p.notes : []).filter(n => n && typeof n.id === 'string').map(n => ({ id: n.id.slice(0, 40), ts: num(n.ts, now), upd: num(n.upd, num(n.ts, now)), kind: NOTE_KINDS[n.kind] ? n.kind : 'bug', text: String(n.text || '').slice(0, 3000), ctx: String(n.ctx || '').slice(0, 500), done: !!n.done, del: !!n.del })).slice(-500);
   if (p.settings) for (const k of Object.keys(DEFAULT_SETTINGS)) { let v = p.settings[k]; if (k === 'arabic' && typeof v === 'boolean') v = v ? 2 : 0;   // ancien réglage oui / non
     if (SETTINGS[k].includes(v)) out.settings[k] = v; }
-  out.settingsAt = num(p.settingsAt); out.epoch = num(p.epoch); out.created = num(p.created, now);
+  out.settingsAt = num(p.settingsAt); out.settingsVer = num(p.settingsVer); out.epoch = num(p.epoch); out.created = num(p.created, now);
   out.backup = num(p.backup); out.last = typeof p.last === 'string' ? p.last : null;
   out.persistAsked = !!p.persistAsked; out.persisted = !!p.persisted; out.rev = typeof p.rev === 'string' ? p.rev : '';
   return out;
@@ -243,6 +243,10 @@ function fromV1(old) {
   let old = null; try { old = JSON.parse(localStorage.getItem(V1_KEY) || 'null'); } catch (e) {}
   if (!old || !old.items || !Object.keys(old.items).length) return;
   P = normalize(fromV1(old)); save();
+})();
+(function settingsV2() {   // demande d'Hugo (18/11) : 50 révisions et 20 nouveaux mots par jour
+  if (P.settingsVer >= 2) return;
+  P.settings.newPerDay = 20; P.settings.reviewPerDay = 50; P.settingsVer = 2; P.settingsAt = Date.now(); save();
 })();
 
 /* ======================= rendu des blocs ======================= */
@@ -409,10 +413,12 @@ const hasWord = w => ITEMS.some(i => i.djp.toLowerCase().split(/[^a-z0-9']+/).in
 const MZ = hasWord('mzyan') && hasWord('bzzaf');   // encouragements en darija seulement si les mots sont dans le cours
 const HELLO = ITEMS.find(i => i.nd === norm('s-salamou 3alikoum')) || null;
 function bonus() { const d = P.days[dayKey()] = P.days[dayKey()] || { n: 0, ok: 0, nw: 0, b: 0, r: 0 }; d.b = (d.b || 0) + 1; save(); }
+const revGoal = () => P.settings.reviewPerDay || 50;
+const revLeft = () => Math.max(0, revGoal() - ((P.days[dayKey()] || {}).r || 0));   // révisions qu'il reste pour atteindre l'objectif du jour
 function daily() {   // les trois étapes de la journée
   const due = dueList(); const left = Math.max(0, P.settings.newPerDay - newToday());
   const avail = nextNew(Math.max(left, 1)); const t = P.days[dayKey()] || { n: 0, ok: 0, nw: 0, b: 0, r: 0 };
-  const s1 = !due.length, s2 = left === 0 || !avail.length, s3 = (t.b || 0) > 0;
+  const s1 = !due.length || revLeft() === 0, s2 = left === 0 || !avail.length, s3 = (t.b || 0) > 0;
   return { due, left, avail, t, s1, s2, s3, done: [s1, s2, s3].filter(Boolean).length };
 }
 function nextDialogue() {   // un dialogue d'une leçon déjà commencée, le moins récemment travaillé
@@ -481,15 +487,16 @@ function screenHome() {
   const sk = streak(); const dg = nextDialogue();
   const curId = avail.length ? avail[0].id : (P.last && byId[P.last] && P.last !== 'MEMO' ? P.last : null); const cur = curId ? byId[curId] : null; const cs = curId ? lessonStats(curId) : null;
   const first = !d.s1 ? 1 : !d.s2 ? 2 : !d.s3 ? 3 : 0;   // la prochaine étape est mise en avant
-  const rDone = t.r || 0, rTot = rDone + due.length;        // révisions faites aujourd'hui / à faire
+  const rGoal = revGoal(), rDone = Math.min(rGoal, t.r || 0), rTot = Math.min(rGoal, (t.r || 0) + due.length);   // révisions faites aujourd'hui / objectif du jour
   const goal = P.settings.newPerDay, nwDone = Math.min(goal, t.nw || 0);
   const cls = (n, done) => `goal ${done ? 'done' : ''} ${first === n ? 'now' : ''}`;
   // trois cases à toucher : la jauge montre où tu en es, un toucher lance l'activité
-  const g1 = `<button type="button" class="${cls(1, d.s1)}" id="rev" ${due.length ? '' : 'disabled'} aria-label="Réviser, ${due.length} à revoir">${ring(rTot ? rDone / rTot : 1, d.s1 ? '✓' : due.length)}<span class="gl">Réviser</span><span class="gs">${rTot ? rDone + '/' + rTot : 'rien à revoir'}</span></button>`;
+  const g1 = d.s1 && due.length ? `<button type="button" class="${cls(1, true)}" id="revmore" aria-label="Réviser, objectif atteint">${ring(1, '✓')}<span class="gl">Réviser</span><span class="gs">${rDone}/${rGoal} · encore 20 ?</span></button>`
+    : `<button type="button" class="${cls(1, d.s1)}" id="rev" ${due.length ? '' : 'disabled'} aria-label="Réviser, ${Math.min(due.length, revLeft())} à revoir">${ring(rTot ? rDone / rTot : 1, d.s1 ? '✓' : Math.min(due.length, revLeft()))}<span class="gl">Réviser</span><span class="gs">${rTot ? rDone + '/' + rTot : 'rien à revoir'}</span></button>`;
   const g2 = left && avail.length ? `<button type="button" class="${cls(2, false)}" id="learn" aria-label="Apprendre, ${nLearn} nouveaux">${ring(goal ? nwDone / goal : 1, left)}<span class="gl">Apprendre</span><span class="gs">${nwDone}/${goal}</span></button>`
     : `<button type="button" class="${cls(2, true)}" id="more" ${avail.length ? '' : 'disabled'} aria-label="Apprendre, objectif atteint">${ring(1, '✓')}<span class="gl">Apprendre</span><span class="gs">${avail.length ? 'encore 5 ?' : 'tout est vu'}</span></button>`;
   const g3 = `<a class="${cls(3, d.s3)}" id="prac" href="${dg ? `#/dialogue/${dg.id}/${dg.idx}` : '#/libre'}" aria-label="Pratiquer, un dialogue">${ring(d.s3 ? 1 : 0, d.s3 ? '✓' : 1)}<span class="gl">Pratiquer</span><span class="gs">${d.s3 ? 'fait' : 'un dialogue'}</span></a>`;
-  const hint = first === 1 ? `À faire : réviser ${plural(due.length, 'élément')}${dueFix ? ` (dont ${plural(dueFix, 'faute relevée')})` : ''}.`
+  const hint = first === 1 ? `À faire : réviser ${plural(Math.min(due.length, revLeft()), 'élément')}${dueFix ? ` (dont ${plural(dueFix, 'faute relevée')})` : ''}.`
     : first === 2 ? `À faire : apprendre ${nLearn} nouveau${nLearn > 1 ? 'x' : ''} · ${lessonLabel(avail[0].id)} · ${esc(avail[0].sec)}`
     : first === 3 ? `À faire : jouer un dialogue${dg ? ' (' + lessonLabel(dg.id) + ')' : ''}, ou bien tes fautes, l'alphabet, un exercice de leçon.` : '';
   const nextRev = !due.length && nextCount ? `Prochaine révision : ${plural(nextCount, 'élément')} ${nextDay === addDays(studyStart(), 1) ? 'demain' : 'le ' + frDate(nextDay)}.` : '';
@@ -508,6 +515,7 @@ function screenHome() {
   if ($('#rev')) $('#rev').onclick = () => startReview();
   if ($('#learn')) $('#learn').onclick = () => startLearn(nextNew(left));
   if ($('#more')) $('#more').onclick = () => startLearn(nextNew(5));
+  if ($('#revmore')) $('#revmore').onclick = () => startReview(20);
   if ($('#fixes')) $('#fixes').onclick = () => startFixes();
   if ($('#abc2')) $('#abc2').onclick = () => { free = { ids: [], src: 'alpha', mode: 'qcm', n: 20 }; runFree(); };
   if (d.done === 3 && t.n > 0 && celebrated !== dayKey()) { celebrated = dayKey(); celebrate(); }
@@ -556,7 +564,7 @@ function screenLesson(id) {
   ${nNew ? `<a class="btn small ghost" href="#/tri/${id}" style="margin-bottom:.4rem">Déjà vu en cours ? Coche ce que tu connais (${nNew})</a>` : ''}` : (ALPHA.length && id === 'L00' ? `<button type="button" class="btn small ghost" id="abc">S'entraîner à reconnaître les lettres</button>` : '')}
   <div class="lsteps" id="lsteps"></div>
   ${l.obj.length ? `<div class="card"><b>Objectifs</b><ul style="margin:.2rem 0;padding-left:1.2rem">${l.obj.map(o => `<li>${o}</li>`).join('')}</ul></div>` : ''}
-  <div class="sec-nav"><div class="chips" id="secs">${secs.map(([i, t]) => `<button type="button" class="chip" data-s="${i}">${esc(t)}</button>`).join('')}</div>
+  <div class="sec-nav"><div class="chips" id="secs">${secs.map(([i, t]) => `<button type="button" class="chip" data-s="${i}" data-t="${esc(t)}">${esc(t)}</button>`).join('')}</div>
   <div class="chips" id="modes">${[['read', 'Tout afficher'], ['hide-dj', 'Cacher la darija'], ['hide-fr', 'Cacher le français']].map(([m, t]) => chip(`data-m="${m}"`, lessonMode === m, t)).join('')}</div></div>
   <div id="lbody" class="${lessonMode}">${body}</div>
   <div class="card" id="lend"></div>
@@ -569,6 +577,7 @@ function screenLesson(id) {
     $('#lsteps').innerHTML = steps.map(([go, t, v, ok], n) => `<button type="button" class="lstep ${ok ? 'ok' : ''}" data-go="${go}"><b>${n + 1}</b> ${t}${v ? ' ' + v : ''}</button>`).join('<span class="arrow" aria-hidden="true">›</span>')
       + `<div class="legend" style="width:100%">Touche une étape pour y aller. La lecture se valide en bas de la leçon${q.dl ? ', un dialogue en le jouant' : ''}${q.ex ? ', un exercice en le marquant comme fait' : ''}.</div>`;
     const ss = sectionsOf(id);
+    $$('#secs .chip').forEach(c => { const x = ss.find(y => y.i === +c.dataset.s); const okS = !!x && !x.left.length; c.classList.toggle('learned', okS); c.textContent = (okS ? '✓ ' : '') + c.dataset.t; });
     $$('#lbody .seclearn').forEach(el => { const x = ss.find(y => y.i === +el.dataset.sec); el.innerHTML = x && x.left.length ? `<button type="button" class="btn small ghost" data-learnsec="${x.i}">Apprendre cette section (${x.left.length})</button>` : x ? '<span class="tag t-ok">Section apprise</span>' : ''; });
     $$('#lbody [data-dlg]').forEach(el => { const dd = P.dlg[id + '/' + el.dataset.dlg]; el.innerHTML = dd ? `<span class="tag t-ok">Validé le ${esc(dd.split('-').reverse().join('/'))}</span>` : '<span class="tag">Pas encore validé</span>'; });
     const dnext = DIALOGS.find(d => d.id === id && !P.dlg[id + '/' + d.idx]);
@@ -796,9 +805,9 @@ function taskFor(it) {   // le type d'exercice suit le niveau : reconnaître, pu
   if (ar && Math.random() < 0.6) return 'arabe';
   return it.writable ? 'write' : it.ord ? 'order' : 'card-fr';
 }
-function startReview() {
-  const due = dueList().slice(0, P.settings.maxReview);
-  startSession('Révision du jour', shuffle(due.map(it => ({ type: taskFor(it), it }))), () => startReview(), 'review');
+function startReview(extra) {   // jusqu'à l'objectif du jour (ou 20 de plus quand il est atteint)
+  const due = dueList().slice(0, extra || revLeft() || 20);
+  startSession(extra ? 'Révisions en plus' : 'Révision du jour', shuffle(due.map(it => ({ type: taskFor(it), it }))), () => startReview(20), 'review');
 }
 function sectionsOf(id) {   // sections (titres de niveau 2) d'une leçon, avec leurs éléments et ce qui reste à apprendre
   const out = []; let cur = null;
@@ -1032,7 +1041,7 @@ function endSession() {
   const nx = kind === 'learn' && from ? nextSection(from.id, from.sec) : null;
   const cont = nx ? `<button type="button" class="btn wide" id="cont">${nx.i === from.sec ? 'Continuer cette section' : 'Section suivante : ' + esc(nx.title)} (${nx.left.length} à apprendre)</button><button type="button" class="btn wide ghost" id="pick">Choisir une autre section de ${lessonName(from.id)}</button>`
     : kind === 'learn' && from && byId[from.id] ? `<div class="win">Tu as appris tous les éléments de ${lessonName(from.id)}${MZ ? ' · <b>mzyan bzzaf !</b>' : ''}</div>` : '';
-  const nextStep = d.due.length ? `<button type="button" class="btn wide" id="rev">Continuer la révision du jour (${Math.min(d.due.length, P.settings.maxReview)}${d.due.length > P.settings.maxReview ? ' sur ' + d.due.length : ''})</button>`
+  const nextStep = d.due.length && !d.s1 ? `<button type="button" class="btn wide" id="rev">Continuer la révision du jour (${Math.min(d.due.length, revLeft())})</button>`
     : !d.s2 && nLearn ? `<button type="button" class="btn wide" id="learn2">Étape suivante : apprendre ${nLearn} nouveau${nLearn > 1 ? 'x' : ''}</button>`
     : !d.s3 && dg ? `<a class="btn wide" href="#/dialogue/${dg.id}/${dg.idx}">Étape suivante : jouer un dialogue</a>`
     : `<div class="win">Parcours du jour terminé${MZ ? ' · <b>mzyan bzzaf !</b>' : ''} À demain.</div>`;
@@ -1148,7 +1157,7 @@ function screenReglages() {
   const opt = (key, labels) => `<div class="chips" data-set="${key}">${SETTINGS[key].map((v, i) => chip(`data-v="${i}"`, S[key] === v, labels[i])).join('')}</div>`;
   let hasBackup = false; try { hasBackup = !!localStorage.getItem(BACKUP_KEY); } catch (e) {}
   view.innerHTML = `<div class="card"><b>Nouveaux éléments par jour</b>${opt('newPerDay', ['5', '10', '15', '20', '30'])}</div>
-  <div class="card"><b>Longueur d'une séance de révision</b>${opt('maxReview', ['10', '20', '30', '50', 'Toutes'])}</div>
+  <div class="card"><b>Révisions par jour</b>${opt('reviewPerDay', ['30', '50', '80', '120', 'Toutes'])}<div class="muted" style="font-size:.82rem">Au-delà, les éléments dus attendent le lendemain ; « encore 20 » permet d'en faire plus.</div></div>
   <div class="card"><b>Taille du texte</b>${opt('font', ['Petite', 'Normale', 'Grande', 'Très grande'])}<div class="ar" style="text-align:left">سْمِيتِي هُوڭُو</div></div>
   <div class="card"><b>Lecture de l'arabe seul (sans la transcription) pendant les révisions</b>${opt('arabic', ['Souvent', 'Parfois', 'Jamais'])}</div>
   <div class="card"><b>Apprendre aussi les phrases modèles</b>${opt('phrases', ['Oui', 'Seulement les mots'])}</div>
@@ -1178,7 +1187,7 @@ function screenAide() {
   <li><b>Trie les leçons déjà vues en cours</b> : dans chaque leçon, « Coche ce que tu connais ». Ce que tu sais part en révision espacée.</li>
   <li><b>Chaque leçon a ses étapes</b> : la lire, apprendre ses mots, jouer ses dialogues, faire ses exercices. Touche une étape, en haut de la leçon, pour y aller. La lecture se valide en bas de la leçon, un dialogue en le jouant, un exercice en le marquant comme fait. « Cacher la darija » ou « Cacher le français » transforme les tableaux en test ; en lecture, touche un mot pour le réviser aujourd'hui ou le signaler.</li>
   <li><b>Apprendre</b> : depuis l'accueil, les nouveaux éléments arrivent dans l'ordre du cours, selon ton objectif du jour. Depuis une leçon, tu apprends <b>section par section</b> (« Apprendre », ou le bouton sous chaque titre), sans limite. Les éléments arrivent par groupes de cinq : présentation, jeu d'association, puis QCM ; à la fin, un bouton enchaîne sur la suite de la section. Si tu en connais un, touche « Je connais déjà ».</li>
-  <li><b>Réviser</b> : l'application redonne chaque élément de plus en plus tard quand tu réussis (1, 2, 4, 7, 15, 30, 60, 120 jours) et tout de suite quand tu rates. Les séances sont courtes ; tu peux les enchaîner. La journée change à 4 h du matin.</li>
+  <li><b>Réviser</b> : jusqu'à 50 éléments par jour (réglable) ; au-delà, ils attendent le lendemain. L'application redonne chaque élément de plus en plus tard quand tu réussis (1, 2, 4, 7, 15, 30, 60, 120 jours) et tout de suite quand tu rates. Les séances sont courtes ; tu peux les enchaîner. La journée change à 4 h du matin.</li>
   <li><b>Le niveau monte avec toi</b> : d'abord reconnaître (QCM), puis te rappeler (cartes : « Raté », « Hésité » ou « Su ») et remettre des phrases en ordre, puis écrire la darija toi-même.</li>
   <li><b>Tes fautes relevées</b> en cours reviennent aussi : la forme que tu avais écrite, et la forme correcte.</li>
   <li><b>Dialogues</b> : cache le français, joue un rôle, ou remets les répliques dans l'ordre. Le dialogue est alors validé (tu peux aussi le valider toi-même avec « J'ai travaillé ce dialogue »).</li>
@@ -1231,5 +1240,5 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     $('#rl').onclick = () => location.reload();
   });
 }
-window.__darija = { P: () => P, R: () => R, ITEMS, FIXES, ALPHA, LEX, DIALOGS, LEARN, NAV, grade, save, route, dueList, nextNew, studyStart, addDays, endOfToday, dayKey, streak, accepted, fromV1, daily, checkBadges, BADGES, bonus, taskFor, sectionsOf };   // pour les tests
+window.__darija = { P: () => P, R: () => R, ITEMS, FIXES, ALPHA, LEX, DIALOGS, LEARN, NAV, grade, save, route, dueList, nextNew, studyStart, addDays, endOfToday, dayKey, streak, accepted, fromV1, daily, checkBadges, BADGES, bonus, taskFor, sectionsOf, revLeft };   // pour les tests
 })();

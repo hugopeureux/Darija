@@ -272,3 +272,5 @@ textarea{padding:.55rem .65rem;font:inherit;font-size:1rem}
 .ocard.bad{border-color:var(--x);background:var(--x-soft)}
 
 .choice .gloss{font-size:.88rem;font-weight:400;color:var(--muted)}
+
+.chip.learned{border-color:var(--ok);background:var(--ok-soft);color:var(--ok);font-weight:700}
