@@ -525,7 +525,9 @@ function screenHome() {
 function lessonSteps(id) {   // étapes d'une leçon : lire, mots, dialogues, exercices
   const l = byId[id], s = lessonStats(id);
   const dl = DIALOGS.filter(d => d.id === id), ex = l.blocks.filter(b => b.t === 'ex');
-  return { s, read: P.read[id], dl: dl.length, dlDone: dl.filter(d => P.dlg[id + '/' + d.idx]).length, ex: ex.length, exDone: ex.filter(b => P.ex[b.id]).length };
+  const q = { s, read: P.read[id], dl: dl.length, dlDone: dl.filter(d => P.dlg[id + '/' + d.idx]).length, ex: ex.length, exDone: ex.filter(b => P.ex[b.id]).length };
+  q.complete = !!q.read && s.seen === s.n && q.dlDone === q.dl && q.exDone === q.ex;   // lue, mots appris, dialogues validés, exercices faits
+  return q;
 }
 function screenLessons() {
   setHead('Leçons');
@@ -533,11 +535,11 @@ function screenLessons() {
   view.innerHTML = `<p class="muted" style="font-size:.85rem;margin:.2rem 0 0"><b>En révision</b> : mots déjà appris ou triés, que l'application te redemande régulièrement. <b>Acquis</b> : mots sus plusieurs fois de suite, qui ne reviennent plus que tous les 7 jours ou plus.</p>` + PARTS.map(p => `<div class="part">Partie ${esc(p.n)} · ${esc(p.title)}</div>` + p.ids.map(id => {
     const l = byId[id], q = lessonSteps(id), s = q.s;
     const k = s.n ? Math.round(s.known / s.n * 100) : 0, v = s.n ? Math.round((s.seen - s.known) / s.n * 100) : 0;
-    const status = !s.n ? '' : mastered(id) ? '<span class="tag t-ok">Maîtrisée</span>' : s.seen ? '<span class="tag t-run">En cours</span>' : '<span class="tag">À découvrir</span>';
+    const status = q.complete ? '<span class="tag t-ok">✓ Terminée</span>' : !s.n ? '' : mastered(id) ? '<span class="tag t-ok">Maîtrisée</span>' : s.seen ? '<span class="tag t-run">En cours</span>' : '<span class="tag">À découvrir</span>';
     const steps = [q.read ? 'Lue ✓' : 'À lire', q.dl ? `Dialogues validés ${q.dlDone}/${q.dl}` : '', q.ex ? `Exercices faits ${q.exDone}/${q.ex}` : ''].filter(Boolean).join(' · ');
     const prog = s.n ? `<div class="bar"><i style="width:${k}%"></i><i class="seen" style="width:${v}%"></i></div><div class="legend">${s.seen} en révision sur ${s.n} · ${s.known} acquis${s.due ? ' · ' + s.due + ' à réviser aujourd\'hui' : ''}</div><div class="legend">${steps}</div>`
       : `<div class="legend">${id === 'L00' ? 'Référence : l\'alphabet se travaille dans la leçon et en séance libre.' : 'Pas d\'éléments à mémoriser.'}</div>`;
-    return `<a class="card lrow ${id === curId ? 'cur' : ''}" href="#/lecon/${id}"><div class="num ${id[0] === 'A' ? 'sm' : ''}">${id[0] === 'A' ? 'Annexe' : l.n}</div><div style="flex:1;min-width:0"><div class="t">${l.title} ${status}</div>${id === curId ? '<div class="here">Tu en es là</div>' : ''}<div class="s">${l.sub}</div>${prog}</div></a>`;
+    return `<a class="card lrow ${id === curId ? 'cur' : ''} ${q.complete ? 'complete' : ''}" href="#/lecon/${id}"><div class="num ${id[0] === 'A' ? 'sm' : ''}">${q.complete ? '<span class="ck" aria-label="Leçon terminée">✓</span>' : ''}${id[0] === 'A' ? 'Annexe' : l.n}</div><div style="flex:1;min-width:0"><div class="t">${l.title} ${status}</div>${id === curId ? '<div class="here">Tu en es là</div>' : ''}<div class="s">${l.sub}</div>${prog}</div></a>`;
   }).join('')).join('')
   + `<div class="part">En fin de cours</div><a class="card lrow" href="#/memo"><div class="num sm">Mémo</div><div><div class="t">Mémo de grammaire</div><div class="s">Pronoms, possessifs, avoir, passé, présent, futur, devoir, négation.</div></div></a>
   <a class="card lrow" href="#/lexique"><div class="num sm">A-Z</div><div><div class="t">Lexique et recherche</div><div class="s">${LEX.length} mots, et toutes les phrases et répliques.</div></div></a>
@@ -744,12 +746,12 @@ function screenDialogue(id, idx) {
       $$('.grip', list).forEach(g => {
         g.onpointerdown = e => {
           e.preventDefault(); const el = g.closest('.ocard'); let startY = e.clientY, lastY = e.clientY, timer = null; const origY = e.clientY;
-          g.setPointerCapture(e.pointerId); el.classList.add('drag');
+          try { g.setPointerCapture(e.pointerId); } catch (er) {} el.classList.add('drag');
           const step = () => {   // déplace la carte au-delà de ses voisines quand le doigt dépasse leur milieu
             el.style.transform = `translateY(${lastY - startY}px)`;
             const prev = el.previousElementSibling, next = el.nextElementSibling, before = el.offsetTop;
             if (next && lastY > next.getBoundingClientRect().top + next.offsetHeight / 2) list.insertBefore(next, el);
-            else if (prev && lastY < prev.getBoundingClientRect().top + prev.offsetHeight / 2) list.insertBefore(el, prev);
+            else if (prev && lastY < prev.getBoundingClientRect().top + prev.offsetHeight / 2) list.insertBefore(prev, el.nextSibling);   // on déplace la voisine, jamais la carte tenue (sinon Android perd le doigt)
             else return;
             startY += el.offsetTop - before; el.style.transform = `translateY(${lastY - startY}px)`;
           };
@@ -760,8 +762,10 @@ function screenDialogue(id, idx) {
             if (dv) { startY -= dv; step(); }
             timer = dv ? requestAnimationFrame(auto) : null;
           };
-          g.onpointermove = ev => { lastY = ev.clientY; step(); if (!timer) auto(); };
-          g.onpointerup = g.onpointercancel = () => { if (timer) cancelAnimationFrame(timer); timer = null; g.onpointermove = g.onpointerup = g.onpointercancel = null; el.style.transform = ''; el.classList.remove('drag'); refresh(); };
+          // écoute sur tout le document : le glisser continue même si le doigt quitte la poignée
+          const mv = ev => { if (ev.pointerId !== e.pointerId) return; ev.preventDefault(); lastY = ev.clientY; step(); if (!timer) auto(); };
+          const end = ev => { if (ev.pointerId !== e.pointerId) return; if (timer) cancelAnimationFrame(timer); timer = null; document.removeEventListener('pointermove', mv); document.removeEventListener('pointerup', end); document.removeEventListener('pointercancel', end); el.style.transform = ''; el.classList.remove('drag'); refresh(); };
+          document.addEventListener('pointermove', mv, { passive: false }); document.addEventListener('pointerup', end); document.addEventListener('pointercancel', end);
         };
       });
       $('#dchk').onclick = () => {
@@ -861,7 +865,7 @@ function startSession(title, tasks, again, kind) {
   if (!tasks.length) return toast('Rien à faire pour cette sélection.');
   if (R) finalize();
   askPersist();
-  R = { title, tasks, i: 0, first: {}, wrong: [], tries: {}, again, kind: kind || 'free', combo: 0, played: 0, started: Date.now(), shownAt: 0 };
+  R = { title, tasks, i: 0, hist: [], first: {}, wrong: [], tries: {}, again, kind: kind || 'free', combo: 0, played: 0, started: Date.now(), shownAt: 0 };
   if (location.hash === '#/session') screenSession(); else location.hash = '#/session';
 }
 function distractors(it, n, field) {
@@ -894,14 +898,16 @@ function screenSession() {
   const task = R.tasks[R.i], it = task.it;
   R.shownAt = Date.now();
   const guard = fn => (...a) => { if (Date.now() - R.shownAt < 350) return; fn(...a); };   // évite qu'un toucher compte sur l'écran suivant
-  const head = `<div class="sessbar"><div class="bar" role="progressbar" aria-label="Avancement" aria-valuemin="0" aria-valuemax="${R.tasks.length}" aria-valuenow="${R.i}"><i style="width:${R.i / R.tasks.length * 100}%"></i></div>${R.combo >= 3 ? `<span class="combo">${R.combo} d'affilée</span>` : ''}<span class="count">${R.i + 1}/${R.tasks.length}</span><button type="button" class="btn small ghost" id="stop">Arrêter</button></div>`;
+  const head = `<div class="sessbar">${R.hist.length ? '<button type="button" class="btn small ghost" id="back1" aria-label="Revoir la carte précédente">‹</button>' : ''}<div class="bar" role="progressbar" aria-label="Avancement" aria-valuemin="0" aria-valuemax="${R.tasks.length}" aria-valuenow="${R.i}"><i style="width:${R.i / R.tasks.length * 100}%"></i></div>${R.combo >= 3 ? `<span class="combo">${R.combo} d'affilée</span>` : ''}<span class="count">${R.i + 1}/${R.tasks.length}</span><button type="button" class="btn small ghost" id="stop">Arrêter</button></div>`;
   const where = it.fix ? `Faute relevée · ${lessonLabel(it.id)}` : `${lessonLabel(it.id)} · ${esc(it.sec)}${it.table ? ' · ' + esc(it.table) : ''}`;
   const ctx = it.ctx ? `<div class="ctx">en réponse à : <b>${it.ctx.dj}</b></div>` : '';
   const reveal = it.fix ? `<div class="reveal"><div class="dj">${esc(it.right)}</div><div class="muted">et non <s>${esc(it.wrong)}</s> · ${lessonLabel(it.id)}</div></div>`
     : `<div class="reveal"><div class="dj">${it.dj}</div><div class="ar">${esc(it.ar)}</div><div class="tr">${it.fr}</div></div>`;
   const showNext = el => { R.shownAt = Date.now(); if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); };
   const praise = () => { const c = R.combo + 1; if (c >= 5 && c % 5 === 0) return `${MZ ? 'Mzyan bzzaf' : 'Excellent'} ! ${c} d'affilée.`; return ['Juste !', MZ ? 'Mzyan !' : 'Bien !', 'Bravo !'][Math.floor(Math.random() * 3)]; };
+  const remember = g => { R.hist.push({ task, g }); };   // pour pouvoir revoir les cartes précédentes
   const answer = g => {
+    remember(g);
     R.combo = g > 0 ? R.combo + 1 : 0;
     if (!(it.key in R.first)) R.first[it.key] = g;
     grade(it, g, task.learn);
@@ -935,8 +941,8 @@ function screenSession() {
     view.innerHTML = head + `<div class="quiz"><div class="ctx">Nouveau · ${where}</div>${ctx}<div class="prompt">${it.fr}</div><div class="reveal"><div class="dj">${it.dj}</div><div class="ar">${esc(it.ar)}</div></div>
       <button type="button" class="btn wide" id="nx">J'ai noté, suivant</button><button type="button" class="btn wide ghost" id="kn">Je connais déjà</button></div>`;
     bindStop();
-    $('#nx').onclick = guard(() => { R.i++; screenSession(); });
-    $('#kn').onclick = guard(() => { knownAlready(it, false); save(); R.first[it.key] = 2; R.tasks = R.tasks.filter((t, j) => j <= R.i || t.type === 'pairs' || t.it !== it); R.i++; screenSession(); });
+    $('#nx').onclick = guard(() => { remember('vu'); R.i++; screenSession(); });
+    $('#kn').onclick = guard(() => { remember('connu'); knownAlready(it, false); save(); R.first[it.key] = 2; R.tasks = R.tasks.filter((t, j) => j <= R.i || t.type === 'pairs' || t.it !== it); R.i++; screenSession(); });
   } else if (task.type === 'qcm-fr' || task.type === 'qcm-dj') {
     const fr = task.type === 'qcm-fr';
     qcm(`<div class="prompt">${fr ? it.fr : it.dj}</div>`, fr ? 'Quelle est la darija ?' : 'Que veut dire… ?', shuffle([it, ...distractors(it, 3, fr ? 'dj' : 'fr')]), o => (fr ? o.dj : o.fr), it, reveal);
@@ -947,7 +953,7 @@ function screenSession() {
     const opts = shuffle([it, ...shuffle(ALPHA.filter(x => x !== it && x.tr !== it.tr)).slice(0, 3)]);
     const rev = `<div class="reveal"><div class="ar">${esc(it.forms.replace(/ · /g, '   '))}</div><div class="muted">${esc(it.name)} · ${esc(it.sound)}</div></div>`;
     qcm(`<div class="prompt arp ar">${esc(it.letter)}</div>`, 'Quelle est cette lettre ?', opts, o => `<b>${esc(o.tr)}</b> · ${esc(o.name)}`, it, rev,
-      ok => { if (!(it.key in R.first)) R.first[it.key] = ok ? 2 : 0; if (!ok && !R.wrong.includes(it)) R.wrong.push(it); R.i++; screenSession(); });
+      ok => { remember(ok ? 2 : 0); if (!(it.key in R.first)) R.first[it.key] = ok ? 2 : 0; if (!ok && !R.wrong.includes(it)) R.wrong.push(it); R.i++; screenSession(); });
   } else if (task.type === 'card-fr' || task.type === 'card-dj' || task.type === 'arabe') {
     const prompt = task.type === 'arabe' ? `<div class="prompt arp ar">${esc(it.ar)}</div><div class="hint">Lis l'arabe : comment ça se dit, et que veut dire… ?</div>`
       : task.type === 'card-fr' ? `<div class="prompt">${it.fr}</div><div class="hint">Dis-le en darija, puis retourne la carte</div>`
@@ -1019,14 +1025,29 @@ function screenSession() {
       const pick = x => (x.dataset.s === 'l' ? A : B)[+x.dataset.k]; const a = pick(sel), c = pick(b); const s0 = sel; sel = null; s0.classList.remove('sel');
       if (a === c || a.nf === c.nf || a.nd === c.nd) {
         [s0, b].forEach(x => { x.disabled = true; x.classList.add('good'); });
-        if (--left === 0) { R.played++; $('#after').innerHTML = `<div class="res good">${miss ? 'Toutes les paires sont trouvées.' : (MZ ? 'Mzyan ! ' : '') + 'Sans une erreur.'}</div><button type="button" class="btn wide" id="nx">Suivant</button>`; $('#nx').onclick = guard(() => { R.i++; screenSession(); }); showNext($('#nx')); }
+        if (--left === 0) { R.played++; $('#after').innerHTML = `<div class="res good">${miss ? 'Toutes les paires sont trouvées.' : (MZ ? 'Mzyan ! ' : '') + 'Sans une erreur.'}</div><button type="button" class="btn wide" id="nx">Suivant</button>`; $('#nx').onclick = guard(() => { remember('paires'); R.i++; screenSession(); }); showNext($('#nx')); }
       } else { miss++; [s0, b].forEach(x => { x.classList.add('wrong'); setTimeout(() => x.classList.remove('wrong'), 450); }); if (navigator.vibrate) navigator.vibrate(30); }
     };
   }
   view.insertAdjacentHTML('beforeend', '<button type="button" class="linkbtn" id="flag">Signaler un problème sur cette carte</button>');
   $('#flag').onclick = () => noteSheet(itemCtx(it) + ' · exercice : ' + task.type, 'contenu');
 }
-function bindStop() { const b = $('#stop'); if (b) b.onclick = () => { R.tasks = R.tasks.slice(0, R.i); endSession(); }; }
+function screenPrev(k) {   // revoir une carte déjà passée (lecture seule)
+  const h = R.hist[k]; if (!h) return screenSession();
+  const it = h.task.it, n = R.hist.length;
+  const res = { 0: ['wrong', 'Raté'], 1: ['mid', 'Hésité'], 2: ['good', 'Su'], vu: ['', 'Nouveau mot, présenté'], connu: ['good', 'Je connais déjà'], paires: ['good', 'Paires trouvées'] }[h.g] || ['', ''];
+  const body = h.task.type === 'pairs' ? `<div class="vocab">${h.task.its.map(x => `<div class="it"><div class="fr">${x.fr}</div><div class="dj">${x.dj}</div><div class="ar">${esc(x.ar)}</div></div>`).join('')}</div>`
+    : it.fix ? `<div class="reveal"><div class="dj">${esc(it.right)}</div><div class="muted">et non <s>${esc(it.wrong)}</s></div></div>`
+    : it.letter ? `<div class="reveal"><div class="ar">${esc(it.forms.replace(/ · /g, '   '))}</div><div class="muted">${esc(it.tr)} · ${esc(it.name)} · ${esc(it.sound)}</div></div>`
+    : `<div class="prompt">${it.fr}</div><div class="reveal"><div class="dj">${it.dj}</div><div class="ar">${esc(it.ar)}</div></div>`;
+  view.innerHTML = `<div class="sessbar"><span class="count">Carte ${k + 1} sur ${n} déjà vues</span></div><div class="quiz prevcard"><div class="ctx">${it.fix ? 'Faute relevée · ' + lessonLabel(it.id) : lessonLabel(it.id) + ' · ' + esc(it.sec || '')}</div>${body}${res[1] ? `<div class="res ${res[0]}">${typeof h.g === 'number' ? 'Ta réponse : ' : ''}${res[1]}</div>` : ''}
+    <div class="row2"><button type="button" class="btn ghost" id="pv" ${k ? '' : 'disabled'}>‹ Précédente</button><button type="button" class="btn ghost" id="nv" ${k < n - 1 ? '' : 'disabled'}>Suivante ›</button></div>
+    <button type="button" class="btn wide" id="cur">Revenir à la carte en cours</button></div>`;
+  $('#pv').onclick = () => screenPrev(k - 1); $('#nv').onclick = () => screenPrev(k + 1); $('#cur').onclick = () => screenSession();
+  window.scrollTo(0, 0);
+}
+function bindStop() { const bk = $('#back1'); if (bk) bk.onclick = () => screenPrev(R.hist.length - 1);
+ const b = $('#stop'); if (b) b.onclick = () => { R.tasks = R.tasks.slice(0, R.i); endSession(); }; }
 function endSession() {
   finalize();
   document.body.classList.remove('in-session');
